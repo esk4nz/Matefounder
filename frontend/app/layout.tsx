@@ -10,7 +10,7 @@ const geistSans = Geist({
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
-  subsets: ["latin"],
+  subsets: ["latin", "cyrillic"],
 });
 
 export const metadata: Metadata = {
@@ -26,7 +26,9 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="bg-[#F8FAFC] text-slate-900 antialiased min-h-screen flex flex-col font-sans">
+      <body
+        className={`${geistSans.className} bg-[#F2F8FF] text-slate-900 antialiased min-h-screen flex flex-col`}
+      >
         <Navbar />
         <main className="flex-1 flex flex-col">{children}</main>
       </body>
