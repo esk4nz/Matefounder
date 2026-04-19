@@ -20,7 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { GoogleSignInButton } from "@/components/layout/google-sign-in-button";
+import { OAuthSignInButton } from "@/components/layout/oauth-sign-in-button";
 
 export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false);
@@ -273,7 +273,10 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <GoogleSignInButton />
+          <div className="flex items-center justify-center gap-3">
+            <OAuthSignInButton provider="google" />
+            <OAuthSignInButton provider="linkedin_oidc" />
+          </div>
         </CardContent>
 
         <CardFooter className="flex justify-center pb-8">
