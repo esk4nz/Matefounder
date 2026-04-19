@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { NavbarUserMenu } from "@/components/layout/navbar-user-menu";
-import { Button } from "@/components/ui/button";
+import { NavbarAuthControls } from "@/components/layout/navbar-auth-controls";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function Navbar() {
@@ -48,26 +47,7 @@ export default async function Navbar() {
           </div>
         </div>
 
-        {user?.email ? (
-          <NavbarUserMenu displayName={navLabel} email={user.email} />
-        ) : (
-          <div className="flex items-center gap-3 shrink-0 ml-auto md:ml-0">
-            <Button
-              asChild
-              variant="ghost"
-              className="h-11 rounded-xl px-5 text-base font-bold text-slate-700 hover:text-blue-600"
-            >
-              <Link href="/login">Увійти</Link>
-            </Button>
-
-            <Button
-              asChild
-              className="h-11 rounded-xl px-6 text-base font-bold shadow-none"
-            >
-              <Link href="/signup">Реєстрація</Link>
-            </Button>
-          </div>
-        )}
+        <NavbarAuthControls initialEmail={user?.email ?? null} initialDisplayName={navLabel || null} />
       </div>
     </nav>
   );
