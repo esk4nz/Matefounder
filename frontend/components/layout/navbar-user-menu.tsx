@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import { signOutAction } from "@/app/actions/auth";
+import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -59,7 +60,10 @@ export function NavbarUserMenu({ displayName, email }: Props) {
           <Link
             role="menuitem"
             href="/profile"
-            className="block px-3 py-2 font-medium text-slate-800 hover:bg-blue-50 cursor-pointer"
+            className={cn(
+              buttonVariants({ variant: "ghost" }),
+              "flex h-auto w-full justify-start rounded-none px-3 py-2 font-medium text-slate-800 shadow-none cursor-pointer",
+            )}
             onClick={() => setOpen(false)}
           >
             Профіль
@@ -67,7 +71,10 @@ export function NavbarUserMenu({ displayName, email }: Props) {
           <Link
             role="menuitem"
             href="/how-it-works"
-            className="block px-3 py-2 font-medium text-slate-800 hover:bg-blue-50 cursor-pointer"
+            className={cn(
+              buttonVariants({ variant: "ghost" }),
+              "flex h-auto w-full justify-start rounded-none px-3 py-2 font-medium text-slate-800 shadow-none cursor-pointer",
+            )}
             onClick={() => setOpen(false)}
           >
             Допомога
@@ -76,7 +83,10 @@ export function NavbarUserMenu({ displayName, email }: Props) {
             <button
               type="submit"
               role="menuitem"
-              className="w-full px-3 py-2 text-left font-medium text-red-700 hover:bg-red-50 cursor-pointer"
+              className={cn(
+                buttonVariants({ variant: "ghost" }),
+                "flex h-auto w-full justify-start rounded-none px-3 py-2 text-left font-medium text-red-700 shadow-none hover:bg-red-50 hover:text-red-700 cursor-pointer",
+              )}
             >
               Вийти
             </button>
