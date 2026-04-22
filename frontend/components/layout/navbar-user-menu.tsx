@@ -9,7 +9,6 @@ import { cn } from "@/lib/utils";
 
 type Props = {
   displayName: string;
-  email: string;
 };
 
 function initialsFromDisplay(displayName: string) {
@@ -19,7 +18,7 @@ function initialsFromDisplay(displayName: string) {
   return base.toUpperCase();
 }
 
-export function NavbarUserMenu({ displayName, email }: Props) {
+export function NavbarUserMenu({ displayName }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 

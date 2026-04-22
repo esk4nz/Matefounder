@@ -84,7 +84,7 @@ export default function RegisterPage() {
                   htmlFor="firstName"
                   className={`text-xs font-bold ${form.formState.errors.firstName ? "text-red-500" : "text-slate-700"}`}
                 >
-                  Ім'я
+                  Ім&apos;я
                 </Label>
                 <Input
                   {...form.register("firstName")}

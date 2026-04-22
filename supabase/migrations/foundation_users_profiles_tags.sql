@@ -37,11 +37,13 @@ create table public.profiles (
   last_name text not null,
   role text not null default 'seeker'
     check (role in ('seeker', 'owner', 'both')),
+  region text,
   city text,
   budget_min integer check (budget_min is null or budget_min >= 0),
   budget_max integer check (budget_max is null or budget_max >= 0),
   gender text,
   bio text,
+  avatar_path text,
   embedding vector(768),
   is_blocked boolean not null default false,
   is_admin boolean not null default false,
@@ -150,11 +152,13 @@ grant update (
   first_name,
   last_name,
   role,
+  region,
   city,
   budget_min,
   budget_max,
   gender,
   bio,
+  avatar_path,
   embedding
 ) on public.profiles to authenticated;
 
@@ -208,6 +212,48 @@ create policy "profile_tags_delete_own"
   to authenticated
   using (
     exists (select 1 from public.profiles p where p.id = profile_id and p.id = auth.uid())
+  );
+
+insert into storage.buckets (id, name, public)
+values ('profile-images', 'profile-images', true)
+on conflict (id) do update
+set public = true;
+
+drop policy if exists "profile_images_public_read" on storage.objects;
+create policy "profile_images_public_read"
+  on storage.objects for select
+  to public
+  using (bucket_id = 'profile-images');
+
+drop policy if exists "profile_images_insert_own" on storage.objects;
+create policy "profile_images_insert_own"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "profile_images_update_own" on storage.objects;
+create policy "profile_images_update_own"
+  on storage.objects for update
+  to authenticated
+  using (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  )
+  with check (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = auth.uid()::text
+  );
+
+drop policy if exists "profile_images_delete_own" on storage.objects;
+create policy "profile_images_delete_own"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'profile-images'
+    and (storage.foldername(name))[1] = auth.uid()::text
   );
 
 -- ---------------------------------------------------------------------------

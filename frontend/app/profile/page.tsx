@@ -1,7 +1,32 @@
-import Link from "next/link";
+import type { User, UserIdentity } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { ProfileSettings } from "@/components/features/profile/profile-settings";
 import { createClient } from "@/lib/supabase/server";
+
+function getIdentityProviders(user: User) {
+  const providers = new Set(
+    (user.identities ?? []).map((identity: UserIdentity) => identity.provider).filter(Boolean),
+  );
+
+  if (typeof user.app_metadata?.provider === "string") {
+    providers.add(user.app_metadata.provider);
+  }
+
+  return Array.from(providers);
+}
+
+function getProviderLabel(provider: string) {
+  if (provider === "email") {
+    return "Email";
+  }
+  if (provider === "google") {
+    return "Google";
+  }
+  if (provider === "linkedin_oidc") {
+    return "LinkedIn";
+  }
+  return "цього провайдера";
+}
 
 export default async function ProfilePage() {
   const supabase = await createClient();
@@ -13,18 +38,53 @@ export default async function ProfilePage() {
     redirect("/login?next=/profile");
   }
 
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("username, first_name, last_name, role, region, city, bio, avatar_path")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  const providers = getIdentityProviders(user);
+  const canManageCredentials = providers.includes("email");
+  const canDeleteWithPassword = canManageCredentials;
+  const externalProviders = providers.filter((provider) => provider !== "email");
+  const providerLabel = externalProviders.length
+    ? externalProviders.map(getProviderLabel).join(" + ")
+    : "Email";
+  const avatarUrl = profile?.avatar_path
+    ? supabase.storage.from("profile-images").getPublicUrl(profile.avatar_path).data.publicUrl
+    : null;
+  const firstNameFallback =
+    profile?.first_name || String(user.user_metadata?.first_name ?? user.user_metadata?.given_name ?? "");
+  const lastNameFallback =
+    profile?.last_name || String(user.user_metadata?.last_name ?? user.user_metadata?.family_name ?? "");
+
   return (
-    <section className="container mx-auto max-w-lg px-6 py-12">
-      <h1 className="text-2xl font-black text-slate-900">Профіль</h1>
-      <p className="mt-2 text-slate-600">
-        Email: <span className="font-medium">{user.email}</span>
-      </p>
-      <p className="mt-4 text-sm text-slate-500">
-        Далі тут буде повне редагування анкети (місто, бюджет, теги, опис для NLP).
-      </p>
-      <Button asChild variant="outline" className="mt-6 cursor-pointer">
-        <Link href="/">На головну</Link>
-      </Button>
-    </section>
+    <ProfileSettings
+      key={[
+        user.id,
+        user.email ?? "",
+        profile?.username ?? "",
+        profile?.role ?? "",
+        profile?.region ?? "",
+        profile?.city ?? "",
+        profile?.bio ?? "",
+        profile?.avatar_path ?? "",
+      ].join(":")}
+      initialEmail={user.email ?? ""}
+      initialProfile={{
+        username: profile?.username ?? "",
+        firstName: firstNameFallback,
+        lastName: lastNameFallback,
+        role: profile?.role ?? "seeker",
+        region: profile?.region ?? "",
+        city: profile?.city ?? "",
+        bio: profile?.bio ?? "",
+        avatarUrl,
+      }}
+      canManageCredentials={canManageCredentials}
+      canDeleteWithPassword={canDeleteWithPassword}
+      providerLabel={providerLabel}
+    />
   );
 }
