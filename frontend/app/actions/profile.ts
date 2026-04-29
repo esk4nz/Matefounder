@@ -6,7 +6,6 @@ import type { User, UserIdentity } from "@supabase/supabase-js";
 import { redirect } from "next/navigation";
 import {
   profileDeleteSchema,
-  profileEmailSchema,
   profilePasswordSchema,
   profileSchema,
 } from "@/app/schemas/profile";
@@ -33,17 +32,6 @@ function getIdentityProviders(user: User) {
 function isPasswordAccount(user: User) {
   const providers = getIdentityProviders(user);
   return providers.has("email") || getAuthProvider(user) === "email";
-}
-
-function mapUpdateEmailError(raw: string) {
-  const lower = raw.toLowerCase();
-  if (lower.includes("already") || lower.includes("exists")) {
-    return "Цей email уже використовується.";
-  }
-  if (lower.includes("email")) {
-    return "Не вдалося оновити email.";
-  }
-  return "Не вдалося зберегти зміни.";
 }
 
 function mapUpdatePasswordError(raw: string) {
@@ -165,53 +153,13 @@ export async function updateProfileAction(
   return { ok: true, message: "Профіль оновлено." };
 }
 
-export async function updateEmailAction(
-  _prevState: ProfileMessage | undefined,
-  formData: FormData,
-): Promise<ProfileMessage> {
-  const parsed = profileEmailSchema.safeParse({
-    email: String(formData.get("email") ?? ""),
-  });
-
-  if (!parsed.success) {
-    return { ok: false };
-  }
-
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз." };
-  }
-
-  if (!isPasswordAccount(user)) {
-    return { ok: false, message: "Для цього акаунта email змінюється через провайдера входу." };
-  }
-
-  const { error } = await supabase.auth.updateUser({
-    email: parsed.data.email.trim().toLowerCase(),
-  });
-
-  if (error) {
-    return { ok: false, message: mapUpdateEmailError(error.message) };
-  }
-
-  await supabase.auth.refreshSession();
-
-  return {
-    ok: true,
-    message: "Запит на зміну email створено. Перевірте пошту, якщо Supabase просить підтвердження.",
-  };
-}
-
 export async function updatePasswordAction(
   _prevState: ProfileMessage | undefined,
   formData: FormData,
 ): Promise<ProfileMessage> {
   const parsed = profilePasswordSchema.safeParse({
-    password: String(formData.get("password") ?? ""),
+    currentPassword: String(formData.get("currentPassword") ?? ""),
+    newPassword: String(formData.get("newPassword") ?? ""),
     confirmPassword: String(formData.get("confirmPassword") ?? ""),
   });
 
@@ -228,12 +176,22 @@ export async function updatePasswordAction(
     return { ok: false, message: "Сесію завершено. Увійдіть ще раз." };
   }
 
-  if (!isPasswordAccount(user)) {
+  if (!isPasswordAccount(user) || !user.email) {
     return { ok: false, message: "Для цього акаунта пароль змінюється через провайдера входу." };
   }
 
+  const verifier = createStatelessAuthClient();
+  const { error: verifyError } = await verifier.auth.signInWithPassword({
+    email: user.email,
+    password: parsed.data.currentPassword,
+  });
+
+  if (verifyError) {
+    return { ok: false, message: "Невірний поточний пароль." };
+  }
+
   const { error } = await supabase.auth.updateUser({
-    password: parsed.data.password,
+    password: parsed.data.newPassword,
   });
 
   if (error) {
@@ -276,8 +234,6 @@ export async function deleteAccountAction(
     email: user.email,
     password: parsed.data.password,
   });
-
-  await verifier.auth.signOut();
 
   if (verifyError) {
     return { ok: false, message: "Невірний пароль." };

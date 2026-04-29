@@ -1,4 +1,4 @@
-import type { FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { useFormState } from "react-hook-form";
 import { Eye, EyeOff } from "lucide-react";
@@ -25,8 +25,10 @@ type Props = {
   onReset: () => void;
   canManageCredentials: boolean;
   providerLabel: string;
+  showCurrentPassword: boolean;
   showPassword: boolean;
   showConfirmPassword: boolean;
+  onToggleCurrentPassword: () => void;
   onTogglePassword: () => void;
   onToggleConfirmPassword: () => void;
 };
@@ -40,14 +42,25 @@ export function ProfilePasswordCard({
   onReset,
   canManageCredentials,
   providerLabel,
+  showCurrentPassword,
   showPassword,
   showConfirmPassword,
+  onToggleCurrentPassword,
   onTogglePassword,
   onToggleConfirmPassword,
 }: Props) {
   const { errors } = useFormState({
     control: form.control,
+    name: ["currentPassword", "newPassword", "confirmPassword"],
   });
+  const [hiddenState, setHiddenState] = useState<ProfileMessage | undefined>(undefined);
+  const visibleState = pending || state === hiddenState ? undefined : state;
+
+  const clearActionMessage = () => {
+    if (visibleState) {
+      setHiddenState(state);
+    }
+  };
 
   return (
     <Card className="border-none bg-white shadow-[0_18px_50px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/80">
@@ -55,27 +68,65 @@ export function ProfilePasswordCard({
         <CardTitle className="text-xl font-bold text-slate-900">Пароль</CardTitle>
         <CardDescription>
           {canManageCredentials
-            ? "Пароль ніколи не показується. Тут можна задати лише новий."
+            ? "Введіть поточний пароль, а потім задайте новий."
             : `Для акаунта з входом через ${providerLabel} зміна пароля недоступна.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
         {canManageCredentials ? (
-          <form action={action} noValidate className="grid gap-4" onSubmit={onSubmit}>
+          <form
+            action={action}
+            noValidate
+            className="grid gap-4"
+            onSubmit={(event) => {
+              setHiddenState(state);
+              onSubmit(event);
+            }}
+          >
             <div className="grid gap-1">
               <Label
-                htmlFor="password"
-                className={errors.password ? "text-red-500" : "text-slate-700"}
+                htmlFor="currentPassword"
+                className={errors.currentPassword ? "text-red-500" : "text-slate-700"}
+              >
+                Поточний пароль
+              </Label>
+              <div className="relative">
+                <Input
+                  {...form.register("currentPassword", {
+                    onChange: clearActionMessage,
+                  })}
+                  id="currentPassword"
+                  type={showCurrentPassword ? "text" : "password"}
+                  autoComplete="current-password"
+                  className={`pr-10 ${errors.currentPassword ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                />
+                <button
+                  type="button"
+                  onClick={onToggleCurrentPassword}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer text-slate-400 transition-colors hover:text-slate-600"
+                >
+                  {showCurrentPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+              <FieldError message={errors.currentPassword?.message} />
+            </div>
+
+            <div className="grid gap-1">
+              <Label
+                htmlFor="newPassword"
+                className={errors.newPassword ? "text-red-500" : "text-slate-700"}
               >
                 Новий пароль
               </Label>
               <div className="relative">
                 <Input
-                  {...form.register("password")}
-                  id="password"
+                  {...form.register("newPassword", {
+                    onChange: clearActionMessage,
+                  })}
+                  id="newPassword"
                   type={showPassword ? "text" : "password"}
                   autoComplete="new-password"
-                  className={`pr-10 ${errors.password ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                  className={`pr-10 ${errors.newPassword ? "border-red-500 focus-visible:ring-red-500" : ""}`}
                 />
                 <button
                   type="button"
@@ -85,7 +136,7 @@ export function ProfilePasswordCard({
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
-              <FieldError message={errors.password?.message} />
+              <FieldError message={errors.newPassword?.message} />
             </div>
 
             <div className="grid gap-1">
@@ -93,11 +144,13 @@ export function ProfilePasswordCard({
                 htmlFor="confirmPassword"
                 className={errors.confirmPassword ? "text-red-500" : "text-slate-700"}
               >
-                Підтвердження пароля
+                Підтвердження нового пароля
               </Label>
               <div className="relative">
                 <Input
-                  {...form.register("confirmPassword")}
+                  {...form.register("confirmPassword", {
+                    onChange: clearActionMessage,
+                  })}
                   id="confirmPassword"
                   type={showConfirmPassword ? "text" : "password"}
                   autoComplete="new-password"
@@ -114,7 +167,7 @@ export function ProfilePasswordCard({
               <FieldError message={errors.confirmPassword?.message} />
             </div>
 
-            <ActionMessage state={state} />
+            <ActionMessage state={visibleState} />
 
             <div className="flex flex-wrap justify-end gap-3">
               <Button

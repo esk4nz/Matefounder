@@ -93,8 +93,7 @@ export function ProfileDangerZoneCard({
         ) : (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-700">
             Для цього акаунта видалення через пароль недоступне, бо вхід зараз керується через{" "}
-            {providerLabel}. Якщо захочеш цей сценарій підтримати, треба окремо продумати flow для
-            OAuth-only акаунтів.
+            {providerLabel}.
           </div>
         )}
       </CardContent>

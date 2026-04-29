@@ -71,16 +71,17 @@ export const profileSchema = z.object({
   }
 });
 
-export const profileEmailSchema = z.object({
-  email: z.string().email("Некоректна пошта"),
-});
-
 export const profilePasswordSchema = z
   .object({
-    password: z.string().min(8, "Пароль має бути не менше 8 символів"),
-    confirmPassword: z.string().min(1, "Підтвердіть пароль"),
+    currentPassword: z.string().min(1, "Введіть поточний пароль"),
+    newPassword: z.string().min(8, "Пароль має бути не менше 8 символів"),
+    confirmPassword: z.string().min(1, "Підтвердіть новий пароль"),
   })
-  .refine((data) => data.password === data.confirmPassword, {
+  .refine((data) => data.currentPassword !== data.newPassword, {
+    message: "Новий пароль має відрізнятися від поточного",
+    path: ["newPassword"],
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
     message: "Паролі не співпадають",
     path: ["confirmPassword"],
   });
@@ -91,6 +92,5 @@ export const profileDeleteSchema = z.object({
 
 export type ProfileValues = z.input<typeof profileSchema>;
 export type NormalizedProfileValues = z.output<typeof profileSchema>;
-export type ProfileEmailValues = z.infer<typeof profileEmailSchema>;
 export type ProfilePasswordValues = z.infer<typeof profilePasswordSchema>;
 export type ProfileDeleteValues = z.infer<typeof profileDeleteSchema>;

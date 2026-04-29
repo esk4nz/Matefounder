@@ -6,18 +6,15 @@ import { startTransition, useActionState, useEffect, useRef, useState, type Form
 import { useForm } from "react-hook-form";
 import {
   deleteAccountAction,
-  updateEmailAction,
   updatePasswordAction,
   updateProfileAction,
 } from "@/app/actions/profile";
 import {
   type ProfileDeleteValues,
   type NormalizedProfileValues,
-  type ProfileEmailValues,
   type ProfilePasswordValues,
   type ProfileValues,
   profileDeleteSchema,
-  profileEmailSchema,
   profilePasswordSchema,
   profileSchema,
 } from "@/app/schemas/profile";
@@ -36,13 +33,13 @@ export function ProfileSettings({
 }: ProfileSettingsProps) {
   const router = useRouter();
   const objectUrlRef = useRef<string | null>(null);
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [selectedAvatarFile, setSelectedAvatarFile] = useState<File | null>(null);
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(initialProfile.avatarUrl);
   const [profileState, profileFormAction, profilePending] = useActionState(updateProfileAction, undefined);
-  const [emailState, emailFormAction, emailPending] = useActionState(updateEmailAction, undefined);
   const [passwordState, passwordFormAction, passwordPending] = useActionState(
     updatePasswordAction,
     undefined,
@@ -64,21 +61,13 @@ export function ProfileSettings({
     },
   });
 
-  const emailForm = useForm<ProfileEmailValues>({
-    resolver: zodResolver(profileEmailSchema),
-    mode: "onSubmit",
-    reValidateMode: "onChange",
-    defaultValues: {
-      email: initialEmail,
-    },
-  });
-
   const passwordForm = useForm<ProfilePasswordValues>({
     resolver: zodResolver(profilePasswordSchema),
-    mode: "onSubmit",
+    mode: "onChange",
     reValidateMode: "onChange",
     defaultValues: {
-      password: "",
+      currentPassword: "",
+      newPassword: "",
       confirmPassword: "",
     },
   });
@@ -109,20 +98,13 @@ export function ProfileSettings({
   }, [profileState, router]);
 
   useEffect(() => {
-    if (!emailState?.ok) {
-      return;
-    }
-
-    router.refresh();
-  }, [emailState, router]);
-
-  useEffect(() => {
     if (!passwordState?.ok) {
       return;
     }
 
     passwordForm.reset({
-      password: "",
+      currentPassword: "",
+      newPassword: "",
       confirmPassword: "",
     });
   }, [passwordForm, passwordState]);
@@ -178,17 +160,13 @@ export function ProfileSettings({
     setAvatarPreviewUrl(initialProfile.avatarUrl);
   };
 
-  const resetEmailForm = () => {
-    emailForm.reset({
-      email: initialEmail,
-    });
-  };
-
   const resetPasswordForm = () => {
     passwordForm.reset({
-      password: "",
+      currentPassword: "",
+      newPassword: "",
       confirmPassword: "",
     });
+    setShowCurrentPassword(false);
     setShowPassword(false);
     setShowConfirmPassword(false);
   };
@@ -219,18 +197,10 @@ export function ProfileSettings({
     });
   };
 
-  const onEmailSubmit = (data: ProfileEmailValues) => {
-    const fd = new FormData();
-    fd.set("email", data.email);
-
-    startTransition(() => {
-      emailFormAction(fd);
-    });
-  };
-
   const onPasswordSubmit = (data: ProfilePasswordValues) => {
     const fd = new FormData();
-    fd.set("password", data.password);
+    fd.set("currentPassword", data.currentPassword);
+    fd.set("newPassword", data.newPassword);
     fd.set("confirmPassword", data.confirmPassword);
 
     startTransition(() => {
@@ -250,11 +220,6 @@ export function ProfileSettings({
   const handleProfileFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void profileForm.handleSubmit(onProfileSubmit)(event);
-  };
-
-  const handleEmailFormSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void emailForm.handleSubmit(onEmailSubmit)(event);
   };
 
   const handlePasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -284,15 +249,7 @@ export function ProfileSettings({
 
         <div className="grid gap-6">
           <ProfileEmailCard
-            form={emailForm}
-            state={emailState}
-            pending={emailPending}
-            action={emailFormAction}
-            onSubmit={handleEmailFormSubmit}
-            onReset={resetEmailForm}
             initialEmail={initialEmail}
-            canManageCredentials={canManageCredentials}
-            providerLabel={providerLabel}
           />
 
           <ProfilePasswordCard
@@ -304,8 +261,10 @@ export function ProfileSettings({
             onReset={resetPasswordForm}
             canManageCredentials={canManageCredentials}
             providerLabel={providerLabel}
+            showCurrentPassword={showCurrentPassword}
             showPassword={showPassword}
             showConfirmPassword={showConfirmPassword}
+            onToggleCurrentPassword={() => setShowCurrentPassword((value) => !value)}
             onTogglePassword={() => setShowPassword((value) => !value)}
             onToggleConfirmPassword={() => setShowConfirmPassword((value) => !value)}
           />
