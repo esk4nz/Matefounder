@@ -13,15 +13,18 @@ import {
   type ProfileDeleteValues,
   type NormalizedProfileValues,
   type ProfilePasswordValues,
+  type ProfileSetPasswordValues,
   type ProfileValues,
   profileDeleteSchema,
   profilePasswordSchema,
+  profileSetPasswordSchema,
   profileSchema,
 } from "@/app/schemas/profile";
 import { ProfileDangerZoneCard } from "@/components/features/profile/profile-danger-zone-card";
 import { ProfileDetailsCard } from "@/components/features/profile/profile-details-card";
 import { ProfileEmailCard } from "@/components/features/profile/profile-email-card";
 import { ProfilePasswordCard } from "@/components/features/profile/profile-password-card";
+import { ProfileSetPasswordCard } from "@/components/features/profile/profile-set-password-card";
 import type { ProfileSettingsProps } from "@/components/features/profile/profile-types";
 
 export function ProfileSettings({
@@ -29,6 +32,7 @@ export function ProfileSettings({
   initialProfile,
   canManageCredentials,
   canDeleteWithPassword,
+  hasPassword,
   providerLabel,
 }: ProfileSettingsProps) {
   const router = useRouter();
@@ -72,6 +76,16 @@ export function ProfileSettings({
     },
   });
 
+  const setPasswordForm = useForm<ProfileSetPasswordValues>({
+    resolver: zodResolver(profileSetPasswordSchema),
+    mode: "onSubmit",
+    reValidateMode: "onSubmit",
+    defaultValues: {
+      newPassword: "",
+      confirmPassword: "",
+    },
+  });
+
   const deleteForm = useForm<ProfileDeleteValues>({
     resolver: zodResolver(profileDeleteSchema),
     mode: "onSubmit",
@@ -107,7 +121,12 @@ export function ProfileSettings({
       newPassword: "",
       confirmPassword: "",
     });
-  }, [passwordForm, passwordState]);
+    setPasswordForm.reset({
+      newPassword: "",
+      confirmPassword: "",
+    });
+    router.refresh();
+  }, [passwordForm, passwordState, router, setPasswordForm]);
 
   const handleAvatarChange = (file: File | null) => {
     if (objectUrlRef.current) {
@@ -171,6 +190,15 @@ export function ProfileSettings({
     setShowConfirmPassword(false);
   };
 
+  const resetSetPasswordForm = () => {
+    setPasswordForm.reset({
+      newPassword: "",
+      confirmPassword: "",
+    });
+    setShowPassword(false);
+    setShowConfirmPassword(false);
+  };
+
   const resetDeleteForm = () => {
     deleteForm.reset({
       password: "",
@@ -208,6 +236,16 @@ export function ProfileSettings({
     });
   };
 
+  const onSetPasswordSubmit = (data: ProfileSetPasswordValues) => {
+    const fd = new FormData();
+    fd.set("newPassword", data.newPassword);
+    fd.set("confirmPassword", data.confirmPassword);
+
+    startTransition(() => {
+      passwordFormAction(fd);
+    });
+  };
+
   const onDeleteSubmit = (data: ProfileDeleteValues) => {
     const fd = new FormData();
     fd.set("password", data.password);
@@ -225,6 +263,11 @@ export function ProfileSettings({
   const handlePasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void passwordForm.handleSubmit(onPasswordSubmit)(event);
+  };
+
+  const handleSetPasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void setPasswordForm.handleSubmit(onSetPasswordSubmit)(event);
   };
 
   const handleDeleteFormSubmit = (event: FormEvent<HTMLFormElement>) => {
@@ -252,22 +295,38 @@ export function ProfileSettings({
             initialEmail={initialEmail}
           />
 
-          <ProfilePasswordCard
-            form={passwordForm}
-            state={passwordState}
-            pending={passwordPending}
-            action={passwordFormAction}
-            onSubmit={handlePasswordFormSubmit}
-            onReset={resetPasswordForm}
-            canManageCredentials={canManageCredentials}
-            providerLabel={providerLabel}
-            showCurrentPassword={showCurrentPassword}
-            showPassword={showPassword}
-            showConfirmPassword={showConfirmPassword}
-            onToggleCurrentPassword={() => setShowCurrentPassword((value) => !value)}
-            onTogglePassword={() => setShowPassword((value) => !value)}
-            onToggleConfirmPassword={() => setShowConfirmPassword((value) => !value)}
-          />
+          {hasPassword ? (
+            <ProfilePasswordCard
+              form={passwordForm}
+              state={passwordState}
+              pending={passwordPending}
+              action={passwordFormAction}
+              onSubmit={handlePasswordFormSubmit}
+              onReset={resetPasswordForm}
+              canManageCredentials={canManageCredentials}
+              providerLabel={providerLabel}
+              showCurrentPassword={showCurrentPassword}
+              showPassword={showPassword}
+              showConfirmPassword={showConfirmPassword}
+              onToggleCurrentPassword={() => setShowCurrentPassword((value) => !value)}
+              onTogglePassword={() => setShowPassword((value) => !value)}
+              onToggleConfirmPassword={() => setShowConfirmPassword((value) => !value)}
+            />
+          ) : (
+            <ProfileSetPasswordCard
+              form={setPasswordForm}
+              state={passwordState}
+              pending={passwordPending}
+              action={passwordFormAction}
+              onSubmit={handleSetPasswordFormSubmit}
+              onReset={resetSetPasswordForm}
+              providerLabel={providerLabel}
+              showPassword={showPassword}
+              showConfirmPassword={showConfirmPassword}
+              onTogglePassword={() => setShowPassword((value) => !value)}
+              onToggleConfirmPassword={() => setShowConfirmPassword((value) => !value)}
+            />
+          )}
 
           <ProfileDangerZoneCard
             form={deleteForm}

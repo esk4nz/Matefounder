@@ -86,6 +86,16 @@ export const profilePasswordSchema = z
     path: ["confirmPassword"],
   });
 
+export const profileSetPasswordSchema = z
+  .object({
+    newPassword: z.string().min(8, "Пароль має бути не менше 8 символів"),
+    confirmPassword: z.string().min(1, "Підтвердіть новий пароль"),
+  })
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    message: "Паролі не співпадають",
+    path: ["confirmPassword"],
+  });
+
 export const profileDeleteSchema = z.object({
   password: z.string().min(1, "Введіть пароль для підтвердження"),
 });
@@ -93,4 +103,5 @@ export const profileDeleteSchema = z.object({
 export type ProfileValues = z.input<typeof profileSchema>;
 export type NormalizedProfileValues = z.output<typeof profileSchema>;
 export type ProfilePasswordValues = z.infer<typeof profilePasswordSchema>;
+export type ProfileSetPasswordValues = z.infer<typeof profileSetPasswordSchema>;
 export type ProfileDeleteValues = z.infer<typeof profileDeleteSchema>;

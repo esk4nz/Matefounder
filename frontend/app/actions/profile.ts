@@ -7,6 +7,7 @@ import { redirect } from "next/navigation";
 import {
   profileDeleteSchema,
   profilePasswordSchema,
+  profileSetPasswordSchema,
   profileSchema,
 } from "@/app/schemas/profile";
 import { isUsernameTaken } from "@/lib/auth/queries";
@@ -31,7 +32,11 @@ function getIdentityProviders(user: User) {
 
 function isPasswordAccount(user: User) {
   const providers = getIdentityProviders(user);
-  return providers.has("email") || getAuthProvider(user) === "email";
+  return (
+    providers.has("email") ||
+    getAuthProvider(user) === "email" ||
+    user.user_metadata?.has_password === true
+  );
 }
 
 function mapUpdatePasswordError(raw: string) {
@@ -157,16 +162,6 @@ export async function updatePasswordAction(
   _prevState: ProfileMessage | undefined,
   formData: FormData,
 ): Promise<ProfileMessage> {
-  const parsed = profilePasswordSchema.safeParse({
-    currentPassword: String(formData.get("currentPassword") ?? ""),
-    newPassword: String(formData.get("newPassword") ?? ""),
-    confirmPassword: String(formData.get("confirmPassword") ?? ""),
-  });
-
-  if (!parsed.success) {
-    return { ok: false };
-  }
-
   const supabase = await createClient();
   const {
     data: { user },
@@ -176,29 +171,73 @@ export async function updatePasswordAction(
     return { ok: false, message: "Сесію завершено. Увійдіть ще раз." };
   }
 
-  if (!isPasswordAccount(user) || !user.email) {
-    return { ok: false, message: "Для цього акаунта пароль змінюється через провайдера входу." };
+  const currentPassword = String(formData.get("currentPassword") ?? "");
+  const newPassword = String(formData.get("newPassword") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+  const hasPassword = isPasswordAccount(user);
+
+  if (hasPassword) {
+    const parsed = profilePasswordSchema.safeParse({
+      currentPassword,
+      newPassword,
+      confirmPassword,
+    });
+
+    if (!parsed.success) {
+      return { ok: false };
+    }
+
+    if (!user.email) {
+      return { ok: false, message: "Для цього акаунта пароль змінюється через провайдера входу." };
+    }
+
+    const verifier = createStatelessAuthClient();
+    const { error: verifyError } = await verifier.auth.signInWithPassword({
+      email: user.email,
+      password: parsed.data.currentPassword,
+    });
+
+    if (verifyError) {
+      return { ok: false, message: "Невірний поточний пароль." };
+    }
+
+    const { error } = await supabase.auth.updateUser({
+      password: parsed.data.newPassword,
+    });
+
+    if (error) {
+      return { ok: false, message: mapUpdatePasswordError(error.message) };
+    }
+
+    return { ok: true, message: "Пароль оновлено." };
   }
 
-  const verifier = createStatelessAuthClient();
-  const { error: verifyError } = await verifier.auth.signInWithPassword({
-    email: user.email,
-    password: parsed.data.currentPassword,
+  const parsed = profileSetPasswordSchema.safeParse({
+    newPassword,
+    confirmPassword,
   });
 
-  if (verifyError) {
-    return { ok: false, message: "Невірний поточний пароль." };
+  if (!parsed.success) {
+    return { ok: false };
+  }
+
+  if (!user.email) {
+    return { ok: false, message: "Для цього акаунта пароль змінюється через провайдера входу." };
   }
 
   const { error } = await supabase.auth.updateUser({
     password: parsed.data.newPassword,
+    data: {
+      ...user.user_metadata,
+      has_password: true,
+    },
   });
 
   if (error) {
     return { ok: false, message: mapUpdatePasswordError(error.message) };
   }
 
-  return { ok: true, message: "Пароль оновлено." };
+  return { ok: true, message: "Пароль встановлено." };
 }
 
 export async function deleteAccountAction(

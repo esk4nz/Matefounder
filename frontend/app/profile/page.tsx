@@ -28,6 +28,14 @@ function getProviderLabel(provider: string) {
   return "цього провайдера";
 }
 
+function userHasPassword(user: User, providers: string[]) {
+  return (
+    providers.includes("email") ||
+    user.app_metadata?.provider === "email" ||
+    user.user_metadata?.has_password === true
+  );
+}
+
 export default async function ProfilePage() {
   const supabase = await createClient();
   const {
@@ -45,8 +53,9 @@ export default async function ProfilePage() {
     .maybeSingle();
 
   const providers = getIdentityProviders(user);
-  const canManageCredentials = providers.includes("email");
-  const canDeleteWithPassword = canManageCredentials;
+  const hasPassword = userHasPassword(user, providers);
+  const canManageCredentials = hasPassword;
+  const canDeleteWithPassword = hasPassword;
   const externalProviders = providers.filter((provider) => provider !== "email");
   const providerLabel = externalProviders.length
     ? externalProviders.map(getProviderLabel).join(" + ")
@@ -70,6 +79,7 @@ export default async function ProfilePage() {
         profile?.city ?? "",
         profile?.bio ?? "",
         profile?.avatar_path ?? "",
+        hasPassword ? "password" : "no-password",
       ].join(":")}
       initialEmail={user.email ?? ""}
       initialProfile={{
@@ -84,6 +94,7 @@ export default async function ProfilePage() {
       }}
       canManageCredentials={canManageCredentials}
       canDeleteWithPassword={canDeleteWithPassword}
+      hasPassword={hasPassword}
       providerLabel={providerLabel}
     />
   );
