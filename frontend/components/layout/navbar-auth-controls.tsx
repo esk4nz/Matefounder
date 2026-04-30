@@ -55,10 +55,10 @@ export function NavbarAuthControls({ initialEmail, initialDisplayName }: Props) 
     });
 
     return () => subscription.unsubscribe();
-  }, [pathname]);
+  }, [initialDisplayName, initialEmail, pathname]);
 
   if (email && displayName) {
-    return <NavbarUserMenu displayName={displayName} email={email} />;
+    return <NavbarUserMenu displayName={displayName} />;
   }
 
   return (
