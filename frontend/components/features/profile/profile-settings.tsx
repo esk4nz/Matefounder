@@ -2,7 +2,15 @@
 
 import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { startTransition, useActionState, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  startTransition,
+  useActionState,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { useForm } from "react-hook-form";
 import {
   deleteAccountAction,
@@ -27,6 +35,7 @@ import { ProfileEmailCard } from "@/components/features/profile/profile-email-ca
 import { ProfilePasswordCard } from "@/components/features/profile/profile-password-card";
 import { ProfileSetPasswordCard } from "@/components/features/profile/profile-set-password-card";
 import type { ProfileSettingsProps } from "@/components/features/profile/profile-types";
+import { createClient } from "@/lib/supabase/client";
 
 const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
 
@@ -163,6 +172,25 @@ export function ProfileSettings({
   );
   const [deleteState, deleteFormAction, deletePending] = useActionState(deleteAccountAction, undefined);
 
+  const redirectToHome = useCallback(() => {
+    router.replace("/");
+    router.refresh();
+  }, [router]);
+
+  const ensureAuthenticated = useCallback(async () => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      redirectToHome();
+      return false;
+    }
+
+    return true;
+  }, [redirectToHome]);
+
   useEffect(() => {
     return () => {
       if (objectUrlRef.current) {
@@ -170,6 +198,42 @@ export function ProfileSettings({
       }
     };
   }, []);
+
+  useEffect(() => {
+    const supabase = createClient();
+
+    async function redirectIfSignedOut() {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        redirectToHome();
+      }
+    }
+
+    void redirectIfSignedOut();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session?.user) {
+        redirectToHome();
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, [redirectToHome]);
+
+  useEffect(() => {
+    if (
+      profileState?.reason === "unauthenticated" ||
+      passwordState?.reason === "unauthenticated" ||
+      deleteState?.reason === "unauthenticated"
+    ) {
+      redirectToHome();
+    }
+  }, [deleteState, passwordState, profileState, redirectToHome]);
 
   useEffect(() => {
     if (!passwordState?.ok) {
@@ -319,22 +383,38 @@ export function ProfileSettings({
   const handleProfileFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setProfileSuccessMessage(null);
-    void profileForm.handleSubmit(onProfileSubmit)(event);
+    void ensureAuthenticated().then((isAuthenticated) => {
+      if (isAuthenticated) {
+        void profileForm.handleSubmit(onProfileSubmit)(event);
+      }
+    });
   };
 
   const handlePasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void passwordForm.handleSubmit(onPasswordSubmit)(event);
+    void ensureAuthenticated().then((isAuthenticated) => {
+      if (isAuthenticated) {
+        void passwordForm.handleSubmit(onPasswordSubmit)(event);
+      }
+    });
   };
 
   const handleSetPasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void setPasswordForm.handleSubmit(onSetPasswordSubmit)(event);
+    void ensureAuthenticated().then((isAuthenticated) => {
+      if (isAuthenticated) {
+        void setPasswordForm.handleSubmit(onSetPasswordSubmit)(event);
+      }
+    });
   };
 
   const handleDeleteFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void deleteForm.handleSubmit(onDeleteSubmit)(event);
+    void ensureAuthenticated().then((isAuthenticated) => {
+      if (isAuthenticated) {
+        void deleteForm.handleSubmit(onDeleteSubmit)(event);
+      }
+    });
   };
 
   return (
