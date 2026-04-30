@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { UseFormReturn } from "react-hook-form";
-import { useFormState } from "react-hook-form";
+import { Controller, useFormState } from "react-hook-form";
 import { Eye, EyeOff } from "lucide-react";
 import type { ProfileMessage } from "@/app/actions/profile";
 import type { ProfileSetPasswordValues } from "@/app/schemas/profile";
@@ -23,7 +23,6 @@ type Props = {
   action: (payload: FormData) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onReset: () => void;
-  providerLabel: string;
   showPassword: boolean;
   showConfirmPassword: boolean;
   onTogglePassword: () => void;
@@ -37,7 +36,6 @@ export function ProfileSetPasswordCard({
   action,
   onSubmit,
   onReset,
-  providerLabel,
   showPassword,
   showConfirmPassword,
   onTogglePassword,
@@ -61,8 +59,8 @@ export function ProfileSetPasswordCard({
       <CardHeader className="space-y-2">
         <CardTitle className="text-xl font-bold text-slate-900">Пароль</CardTitle>
         <CardDescription>
-          Встановіть пароль для акаунта з входом через {providerLabel}, щоб надалі входити також
-          через email і пароль.
+          Встановіть пароль для акаунта з входом через прив’язаний обліковий запис, щоб надалі
+          входити також через email/login і пароль.
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
@@ -83,14 +81,23 @@ export function ProfileSetPasswordCard({
               Новий пароль
             </Label>
             <div className="relative">
-              <Input
-                {...form.register("newPassword", {
-                  onChange: clearActionMessage,
-                })}
-                id="setNewPassword"
-                type={showPassword ? "text" : "password"}
-                autoComplete="new-password"
-                className={`pr-10 ${errors.newPassword ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+              <Controller
+                control={form.control}
+                name="newPassword"
+                render={({ field }) => (
+                  <Input
+                    {...field}
+                    value={field.value ?? ""}
+                    id="setNewPassword"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    className={`pr-10 ${errors.newPassword ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                    onChange={(event) => {
+                      field.onChange(event);
+                      clearActionMessage();
+                    }}
+                  />
+                )}
               />
               <button
                 type="button"
@@ -111,14 +118,23 @@ export function ProfileSetPasswordCard({
               Підтвердження
             </Label>
             <div className="relative">
-              <Input
-                {...form.register("confirmPassword", {
-                  onChange: clearActionMessage,
-                })}
-                id="setConfirmPassword"
-                type={showConfirmPassword ? "text" : "password"}
-                autoComplete="new-password"
-                className={`pr-10 ${errors.confirmPassword ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+              <Controller
+                control={form.control}
+                name="confirmPassword"
+                render={({ field }) => (
+                  <Input
+                    {...field}
+                    value={field.value ?? ""}
+                    id="setConfirmPassword"
+                    type={showConfirmPassword ? "text" : "password"}
+                    autoComplete="new-password"
+                    className={`pr-10 ${errors.confirmPassword ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                    onChange={(event) => {
+                      field.onChange(event);
+                      clearActionMessage();
+                    }}
+                  />
+                )}
               />
               <button
                 type="button"
@@ -138,14 +154,16 @@ export function ProfileSetPasswordCard({
               type="button"
               variant="outline"
               className="h-11 cursor-pointer px-5 font-bold"
-              onClick={onReset}
+              onClick={() => {
+                setHiddenState(state);
+                onReset();
+              }}
             >
               Скасувати
             </Button>
             <Button
               type="submit"
               disabled={pending}
-              variant="outline"
               className="h-11 cursor-pointer px-5 font-bold"
             >
               {pending ? "Встановлення..." : "Встановити пароль"}

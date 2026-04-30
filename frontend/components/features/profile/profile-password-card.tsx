@@ -24,7 +24,6 @@ type Props = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onReset: () => void;
   canManageCredentials: boolean;
-  providerLabel: string;
   showCurrentPassword: boolean;
   showPassword: boolean;
   showConfirmPassword: boolean;
@@ -41,7 +40,6 @@ export function ProfilePasswordCard({
   onSubmit,
   onReset,
   canManageCredentials,
-  providerLabel,
   showCurrentPassword,
   showPassword,
   showConfirmPassword,
@@ -69,7 +67,7 @@ export function ProfilePasswordCard({
         <CardDescription>
           {canManageCredentials
             ? "Введіть поточний пароль, а потім задайте новий."
-            : `Для акаунта з входом через ${providerLabel} зміна пароля недоступна.`}
+            : "Для акаунта з входом через прив’язаний обліковий запис зміна пароля недоступна."}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
@@ -181,7 +179,6 @@ export function ProfilePasswordCard({
               <Button
                 type="submit"
                 disabled={pending}
-                variant="outline"
                 className="h-11 cursor-pointer px-5 font-bold"
               >
                 {pending ? "Оновлення..." : "Оновити пароль"}
@@ -190,8 +187,8 @@ export function ProfilePasswordCard({
           </form>
         ) : (
           <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 text-sm text-slate-700">
-            Пароль для цього акаунта керується через {providerLabel}. Якщо хочете керувати
-            паролем вручну, увійдіть через email/password акаунт.
+            Пароль для цього акаунта керується через прив’язаний обліковий запис. Якщо хочете
+            керувати паролем вручну, увійдіть через email/password акаунт.
           </div>
         )}
       </CardContent>

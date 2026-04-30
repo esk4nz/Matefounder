@@ -3,8 +3,10 @@
 import { randomUUID } from "node:crypto";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import type { User, UserIdentity } from "@supabase/supabase-js";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
+  type NormalizedProfileValues,
   profileDeleteSchema,
   profilePasswordSchema,
   profileSetPasswordSchema,
@@ -18,6 +20,9 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
+  profile?: NormalizedProfileValues & {
+    avatarUrl: string | null;
+  };
 };
 
 function getAuthProvider(user: User) {
@@ -155,7 +160,27 @@ export async function updateProfileAction(
     return { ok: false, message: "Не вдалося зберегти профіль." };
   }
 
-  return { ok: true, message: "Профіль оновлено." };
+  revalidatePath("/profile");
+  revalidatePath("/", "layout");
+
+  const avatarUrl = nextAvatarPath
+    ? supabase.storage.from("profile-images").getPublicUrl(nextAvatarPath).data.publicUrl
+    : null;
+
+  return {
+    ok: true,
+    message: "Профіль оновлено.",
+    profile: {
+      username: parsed.data.username.trim(),
+      firstName: parsed.data.firstName.trim(),
+      lastName: parsed.data.lastName.trim(),
+      role: parsed.data.role,
+      region: parsed.data.region,
+      city: parsed.data.city,
+      bio: parsed.data.bio,
+      avatarUrl,
+    },
+  };
 }
 
 export async function updatePasswordAction(
@@ -281,9 +306,13 @@ export async function deleteAccountAction(
   const admin = createServiceRoleClient();
   const { data: currentProfile } = await supabase
     .from("profiles")
-    .select("avatar_path")
+    .select("avatar_path, is_admin")
     .eq("id", user.id)
     .maybeSingle();
+
+  if (currentProfile?.is_admin) {
+    return { ok: false, message: "Адміністраторський акаунт не можна видалити зі сторінки профілю." };
+  }
 
   if (currentProfile?.avatar_path) {
     await supabase.storage.from("profile-images").remove([currentProfile.avatar_path]);

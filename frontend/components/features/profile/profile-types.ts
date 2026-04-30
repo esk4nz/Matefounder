@@ -17,5 +17,5 @@ export type ProfileSettingsProps = {
   canManageCredentials: boolean;
   canDeleteWithPassword: boolean;
   hasPassword: boolean;
-  providerLabel: string;
+  isAdmin: boolean;
 };

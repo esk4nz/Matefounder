@@ -1,6 +1,6 @@
 import type { FormEvent } from "react";
 import type { UseFormReturn } from "react-hook-form";
-import { useFormState, useWatch } from "react-hook-form";
+import { Controller, useFormState, useWatch } from "react-hook-form";
 import { PencilLine, Upload, UserRound } from "lucide-react";
 import type { ProfileMessage } from "@/app/actions/profile";
 import type { NormalizedProfileValues, ProfileValues } from "@/app/schemas/profile";
@@ -32,6 +32,7 @@ type Props = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onReset: () => void;
   avatarPreviewUrl: string | null;
+  avatarInputVersion: number;
   onAvatarChange: (file: File | null) => void;
   onAvatarRemove: () => void;
 };
@@ -44,6 +45,7 @@ export function ProfileDetailsCard({
   onSubmit,
   onReset,
   avatarPreviewUrl,
+  avatarInputVersion,
   onAvatarChange,
   onAvatarRemove,
 }: Props) {
@@ -59,7 +61,6 @@ export function ProfileDetailsCard({
     name: "region",
   });
   const cityOptions = getCitiesForRegion(regionValue ?? "");
-  const regionField = form.register("region");
 
   return (
     <Card className="border-none bg-white shadow-[0_18px_50px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/80">
@@ -96,6 +97,7 @@ export function ProfileDetailsCard({
                     Завантажити фото
                   </Label>
                   <input
+                    key={avatarInputVersion}
                     id="avatar-upload"
                     type="file"
                     accept="image/png,image/jpeg,image/webp,image/jpg"
@@ -115,7 +117,7 @@ export function ProfileDetailsCard({
                   </Button>
                 </div>
                 <p className="text-xs text-slate-500">
-                  PNG, JPG або WEBP. Фото зберігатиметься в Supabase Storage.
+                  PNG, JPG або WEBP.
                 </p>
               </div>
             </div>
@@ -129,11 +131,18 @@ export function ProfileDetailsCard({
               >
                 Ім&apos;я
               </Label>
-              <Input
-                {...form.register("firstName")}
-                id="firstName"
-                autoComplete="given-name"
-                className={errors.firstName ? "border-red-500 focus-visible:ring-red-500" : ""}
+              <Controller
+                control={form.control}
+                name="firstName"
+                render={({ field }) => (
+                  <Input
+                    {...field}
+                    value={field.value ?? ""}
+                    id="firstName"
+                    autoComplete="given-name"
+                    className={errors.firstName ? "border-red-500 focus-visible:ring-red-500" : ""}
+                  />
+                )}
               />
               <FieldError message={errors.firstName?.message} />
             </div>
@@ -145,11 +154,18 @@ export function ProfileDetailsCard({
               >
                 Прізвище
               </Label>
-              <Input
-                {...form.register("lastName")}
-                id="lastName"
-                autoComplete="family-name"
-                className={errors.lastName ? "border-red-500 focus-visible:ring-red-500" : ""}
+              <Controller
+                control={form.control}
+                name="lastName"
+                render={({ field }) => (
+                  <Input
+                    {...field}
+                    value={field.value ?? ""}
+                    id="lastName"
+                    autoComplete="family-name"
+                    className={errors.lastName ? "border-red-500 focus-visible:ring-red-500" : ""}
+                  />
+                )}
               />
               <FieldError message={errors.lastName?.message} />
             </div>
@@ -162,11 +178,18 @@ export function ProfileDetailsCard({
             >
               Логін
             </Label>
-            <Input
-              {...form.register("username")}
-              id="username"
-              autoComplete="username"
-              className={errors.username ? "border-red-500 focus-visible:ring-red-500" : ""}
+            <Controller
+              control={form.control}
+              name="username"
+              render={({ field }) => (
+                <Input
+                  {...field}
+                  value={field.value ?? ""}
+                  id="username"
+                  autoComplete="username"
+                  className={errors.username ? "border-red-500 focus-visible:ring-red-500" : ""}
+                />
+              )}
             />
             <FieldError message={errors.username?.message} />
           </div>
@@ -179,17 +202,24 @@ export function ProfileDetailsCard({
               >
                 Моя роль у пошуку
               </Label>
-              <Select
-                {...form.register("role")}
-                id="role"
-                className={errors.role ? "border-red-500 focus-visible:ring-red-500" : ""}
-              >
-                {PROFILE_ROLE_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
+              <Controller
+                control={form.control}
+                name="role"
+                render={({ field }) => (
+                  <Select
+                    {...field}
+                    value={field.value ?? ""}
+                    id="role"
+                    className={errors.role ? "border-red-500 focus-visible:ring-red-500" : ""}
+                  >
+                    {PROFILE_ROLE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              />
               <FieldError message={errors.role?.message} />
             </div>
 
@@ -200,31 +230,38 @@ export function ProfileDetailsCard({
               >
                 Область
               </Label>
-              <Select
-                {...regionField}
-                id="region"
-                className={errors.region ? "border-red-500 focus-visible:ring-red-500" : ""}
-                onChange={(event) => {
-                  regionField.onChange(event);
-                  const nextRegion = event.target.value;
-                  const currentCity = form.getValues("city");
-                  if (!currentCity || isValidCityForRegion(nextRegion, currentCity)) {
-                    return;
-                  }
+              <Controller
+                control={form.control}
+                name="region"
+                render={({ field }) => (
+                  <Select
+                    {...field}
+                    value={field.value ?? ""}
+                    id="region"
+                    className={errors.region ? "border-red-500 focus-visible:ring-red-500" : ""}
+                    onChange={(event) => {
+                      field.onChange(event);
+                      const nextRegion = event.target.value;
+                      const currentCity = form.getValues("city");
+                      if (!currentCity || isValidCityForRegion(nextRegion, currentCity)) {
+                        return;
+                      }
 
-                  form.setValue("city", "", {
-                    shouldDirty: true,
-                    shouldValidate: true,
-                  });
-                }}
-              >
-                <option value="">Не обрано</option>
-                {REGION_OPTIONS.map((region) => (
-                  <option key={region} value={region}>
-                    {region}
-                  </option>
-                ))}
-              </Select>
+                      form.setValue("city", "", {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
+                  >
+                    <option value="">Не обрано</option>
+                    {REGION_OPTIONS.map((region) => (
+                      <option key={region} value={region}>
+                        {region}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              />
               <FieldError message={errors.region?.message} />
             </div>
 
@@ -235,19 +272,28 @@ export function ProfileDetailsCard({
               >
                 Місто
               </Label>
-              <Select
-                {...form.register("city")}
-                id="city"
-                disabled={!regionValue}
-                className={errors.city ? "border-red-500 focus-visible:ring-red-500" : ""}
-              >
-                <option value="">{regionValue ? "Оберіть місто" : "Спочатку оберіть область"}</option>
-                {cityOptions.map((city) => (
-                  <option key={city} value={city}>
-                    {city}
-                  </option>
-                ))}
-              </Select>
+              <Controller
+                control={form.control}
+                name="city"
+                render={({ field }) => (
+                  <Select
+                    {...field}
+                    value={field.value ?? ""}
+                    id="city"
+                    disabled={!regionValue}
+                    className={errors.city ? "border-red-500 focus-visible:ring-red-500" : ""}
+                  >
+                    <option value="">
+                      {regionValue ? "Оберіть місто" : "Спочатку оберіть область"}
+                    </option>
+                    {cityOptions.map((city) => (
+                      <option key={city} value={city}>
+                        {city}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              />
               <FieldError message={errors.city?.message} />
             </div>
           </div>
@@ -259,15 +305,24 @@ export function ProfileDetailsCard({
             >
               Опис себе
             </Label>
-            <Textarea
-              {...form.register("bio")}
-              id="bio"
-              placeholder="Коротко розкажіть про себе, свій стиль життя, інтереси або очікування від співмешканця."
-              className={errors.bio ? "border-red-500 focus-visible:ring-red-500" : ""}
+            <Controller
+              control={form.control}
+              name="bio"
+              render={({ field }) => (
+                <Textarea
+                  {...field}
+                  value={field.value ?? ""}
+                  id="bio"
+                  placeholder="Коротко розкажіть про себе, свій стиль життя, інтереси або очікування від співмешканця."
+                  className={`min-h-50 resize-y ${
+                    errors.bio ? "border-red-500 focus-visible:ring-red-500" : ""
+                  }`}
+                />
+              )}
             />
             <div className="flex items-center justify-between gap-3">
               <FieldError message={errors.bio?.message} />
-              <span className="text-xs text-slate-400">{bioValue?.length ?? 0}/500</span>
+              <span className="text-xs text-slate-400">{bioValue?.length ?? 0}/1000</span>
             </div>
           </div>
 

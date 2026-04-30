@@ -23,7 +23,6 @@ type Props = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onReset: () => void;
   canDeleteWithPassword: boolean;
-  providerLabel: string;
 };
 
 export function ProfileDangerZoneCard({
@@ -34,7 +33,6 @@ export function ProfileDangerZoneCard({
   onSubmit,
   onReset,
   canDeleteWithPassword,
-  providerLabel,
 }: Props) {
   const { errors } = useFormState({
     control: form.control,
@@ -92,8 +90,8 @@ export function ProfileDangerZoneCard({
           </form>
         ) : (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-slate-700">
-            Для цього акаунта видалення через пароль недоступне, бо вхід зараз керується через{" "}
-            {providerLabel}.
+            Для цього акаунта видалення через пароль недоступне, бо вхід зараз керується через
+            прив’язаний обліковий запис.
           </div>
         )}
       </CardContent>

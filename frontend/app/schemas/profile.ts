@@ -41,7 +41,7 @@ export const profileSchema = z.object({
   city: optionalLocationField,
   bio: z
     .string()
-    .max(500, "Максимум 500 символів")
+    .max(1000, "Максимум 1000 символів")
     .optional()
     .transform((value) => value?.trim() ?? ""),
 }).superRefine((data, ctx) => {

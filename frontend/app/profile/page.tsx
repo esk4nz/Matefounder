@@ -15,19 +15,6 @@ function getIdentityProviders(user: User) {
   return Array.from(providers);
 }
 
-function getProviderLabel(provider: string) {
-  if (provider === "email") {
-    return "Email";
-  }
-  if (provider === "google") {
-    return "Google";
-  }
-  if (provider === "linkedin_oidc") {
-    return "LinkedIn";
-  }
-  return "цього провайдера";
-}
-
 function userHasPassword(user: User, providers: string[]) {
   return (
     providers.includes("email") ||
@@ -48,18 +35,15 @@ export default async function ProfilePage() {
 
   const { data: profile } = await supabase
     .from("profiles")
-    .select("username, first_name, last_name, role, region, city, bio, avatar_path")
+    .select("username, first_name, last_name, role, region, city, bio, avatar_path, is_admin")
     .eq("id", user.id)
     .maybeSingle();
 
   const providers = getIdentityProviders(user);
   const hasPassword = userHasPassword(user, providers);
+  const isAdmin = profile?.is_admin === true;
   const canManageCredentials = hasPassword;
-  const canDeleteWithPassword = hasPassword;
-  const externalProviders = providers.filter((provider) => provider !== "email");
-  const providerLabel = externalProviders.length
-    ? externalProviders.map(getProviderLabel).join(" + ")
-    : "Email";
+  const canDeleteWithPassword = hasPassword && !isAdmin;
   const avatarUrl = profile?.avatar_path
     ? supabase.storage.from("profile-images").getPublicUrl(profile.avatar_path).data.publicUrl
     : null;
@@ -74,12 +58,15 @@ export default async function ProfilePage() {
         user.id,
         user.email ?? "",
         profile?.username ?? "",
+        firstNameFallback,
+        lastNameFallback,
         profile?.role ?? "",
         profile?.region ?? "",
         profile?.city ?? "",
         profile?.bio ?? "",
         profile?.avatar_path ?? "",
         hasPassword ? "password" : "no-password",
+        isAdmin ? "admin" : "user",
       ].join(":")}
       initialEmail={user.email ?? ""}
       initialProfile={{
@@ -95,7 +82,7 @@ export default async function ProfilePage() {
       canManageCredentials={canManageCredentials}
       canDeleteWithPassword={canDeleteWithPassword}
       hasPassword={hasPassword}
-      providerLabel={providerLabel}
+      isAdmin={isAdmin}
     />
   );
 }
