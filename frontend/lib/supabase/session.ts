@@ -52,10 +52,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(new URL(getSafeNextPath(request), request.url));
   }
 
-  if (!user && isProtectedRoute(pathname)) {
-    const loginUrl = new URL("/login", request.url);
-    loginUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(loginUrl);
+  if (!user && request.method === "GET" && isProtectedRoute(pathname)) {
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   return response;

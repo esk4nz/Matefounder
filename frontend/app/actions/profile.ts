@@ -20,6 +20,7 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
+  reason?: "unauthenticated";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
   };
@@ -86,7 +87,7 @@ export async function updateProfileAction(
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз." };
+    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
   const { data: currentProfile, error: profileError } = await supabase
@@ -193,7 +194,7 @@ export async function updatePasswordAction(
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз." };
+    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
   const currentPassword = String(formData.get("currentPassword") ?? "");
@@ -283,7 +284,7 @@ export async function deleteAccountAction(
   } = await supabase.auth.getUser();
 
   if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз." };
+    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
   if (!isPasswordAccount(user) || !user.email) {
