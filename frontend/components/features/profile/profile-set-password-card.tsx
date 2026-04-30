@@ -63,11 +63,11 @@ export function ProfileSetPasswordCard({
           входити також через email/login і пароль.
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-5">
+      <CardContent className="flex flex-1 flex-col">
         <form
           action={action}
           noValidate
-          className="grid gap-4"
+          className="flex flex-1 flex-col gap-4"
           onSubmit={(event) => {
             setHiddenState(state);
             onSubmit(event);
@@ -149,7 +149,7 @@ export function ProfileSetPasswordCard({
 
           <ActionMessage state={visibleState} />
 
-          <div className="flex flex-wrap justify-end gap-3">
+          <div className="mt-auto flex flex-wrap justify-end gap-3">
             <Button
               type="button"
               variant="outline"

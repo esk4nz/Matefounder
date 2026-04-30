@@ -47,9 +47,9 @@ export function ProfileDangerZoneCard({
           очищені.
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-5">
+      <CardContent className="flex flex-1 flex-col">
         {canDeleteWithPassword ? (
-          <form action={action} noValidate className="grid gap-4" onSubmit={onSubmit}>
+          <form action={action} noValidate className="flex flex-1 flex-col gap-4" onSubmit={onSubmit}>
             <div className="grid gap-1">
               <Label
                 htmlFor="deletePassword"
@@ -69,7 +69,7 @@ export function ProfileDangerZoneCard({
 
             <ActionMessage state={state} />
 
-            <div className="flex flex-wrap justify-end gap-3">
+            <div className="mt-auto flex flex-wrap justify-end gap-3">
               <Button
                 type="button"
                 variant="outline"

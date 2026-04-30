@@ -70,12 +70,12 @@ export function ProfilePasswordCard({
             : "Для акаунта з входом через прив’язаний обліковий запис зміна пароля недоступна."}
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-5">
+      <CardContent className="flex flex-1 flex-col">
         {canManageCredentials ? (
           <form
             action={action}
             noValidate
-            className="grid gap-4"
+            className="flex flex-1 flex-col gap-4"
             onSubmit={(event) => {
               setHiddenState(state);
               onSubmit(event);
@@ -167,7 +167,7 @@ export function ProfilePasswordCard({
 
             <ActionMessage state={visibleState} />
 
-            <div className="flex flex-wrap justify-end gap-3">
+            <div className="mt-auto flex flex-wrap justify-end gap-3">
               <Button
                 type="button"
                 variant="outline"
