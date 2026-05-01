@@ -172,12 +172,12 @@ export function ProfileSettings({
   );
   const [deleteState, deleteFormAction, deletePending] = useActionState(deleteAccountAction, undefined);
 
-  const redirectToHome = useCallback(() => {
-    router.replace("/");
+  const redirectToHome = useCallback((reason?: "profile_not_found") => {
+    router.replace(reason ? `/?error=${reason}` : "/");
     router.refresh();
   }, [router]);
 
-  const ensureAuthenticated = useCallback(async () => {
+  const ensureProfileAvailable = useCallback(async () => {
     const supabase = createClient();
     const {
       data: { user },
@@ -185,6 +185,17 @@ export function ProfileSettings({
 
     if (!user) {
       redirectToHome();
+      return false;
+    }
+
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error || !profile) {
+      redirectToHome("profile_not_found");
       return false;
     }
 
@@ -202,24 +213,38 @@ export function ProfileSettings({
   useEffect(() => {
     const supabase = createClient();
 
-    async function redirectIfSignedOut() {
+    async function redirectIfProfileUnavailable() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
       if (!user) {
         redirectToHome();
+        return;
+      }
+
+      const { data: profile, error } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (error || !profile) {
+        redirectToHome("profile_not_found");
       }
     }
 
-    void redirectIfSignedOut();
+    void redirectIfProfileUnavailable();
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session?.user) {
         redirectToHome();
+        return;
       }
+
+      void redirectIfProfileUnavailable();
     });
 
     return () => subscription.unsubscribe();
@@ -228,10 +253,19 @@ export function ProfileSettings({
   useEffect(() => {
     if (
       profileState?.reason === "unauthenticated" ||
+      profileState?.reason === "missingProfile" ||
       passwordState?.reason === "unauthenticated" ||
-      deleteState?.reason === "unauthenticated"
+      passwordState?.reason === "missingProfile" ||
+      deleteState?.reason === "unauthenticated" ||
+      deleteState?.reason === "missingProfile"
     ) {
-      redirectToHome();
+      redirectToHome(
+        profileState?.reason === "missingProfile" ||
+          passwordState?.reason === "missingProfile" ||
+          deleteState?.reason === "missingProfile"
+          ? "profile_not_found"
+          : undefined,
+      );
     }
   }, [deleteState, passwordState, profileState, redirectToHome]);
 
@@ -383,8 +417,8 @@ export function ProfileSettings({
   const handleProfileFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setProfileSuccessMessage(null);
-    void ensureAuthenticated().then((isAuthenticated) => {
-      if (isAuthenticated) {
+    void ensureProfileAvailable().then((isAvailable) => {
+      if (isAvailable) {
         void profileForm.handleSubmit(onProfileSubmit)(event);
       }
     });
@@ -392,8 +426,8 @@ export function ProfileSettings({
 
   const handlePasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureAuthenticated().then((isAuthenticated) => {
-      if (isAuthenticated) {
+    void ensureProfileAvailable().then((isAvailable) => {
+      if (isAvailable) {
         void passwordForm.handleSubmit(onPasswordSubmit)(event);
       }
     });
@@ -401,8 +435,8 @@ export function ProfileSettings({
 
   const handleSetPasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureAuthenticated().then((isAuthenticated) => {
-      if (isAuthenticated) {
+    void ensureProfileAvailable().then((isAvailable) => {
+      if (isAvailable) {
         void setPasswordForm.handleSubmit(onSetPasswordSubmit)(event);
       }
     });
@@ -410,8 +444,8 @@ export function ProfileSettings({
 
   const handleDeleteFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureAuthenticated().then((isAuthenticated) => {
-      if (isAuthenticated) {
+    void ensureProfileAvailable().then((isAvailable) => {
+      if (isAvailable) {
         void deleteForm.handleSubmit(onDeleteSubmit)(event);
       }
     });
