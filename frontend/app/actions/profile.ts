@@ -2,7 +2,6 @@
 
 import { randomUUID } from "node:crypto";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
-import type { User, UserIdentity } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
@@ -13,6 +12,7 @@ import {
   profileSchema,
 } from "@/app/schemas/profile";
 import { isUsernameTaken } from "@/lib/auth/queries";
+import { userHasPassword } from "@/lib/auth/user";
 import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -20,30 +20,11 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
-  reason?: "unauthenticated";
+  reason?: "unauthenticated" | "missingProfile";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
   };
 };
-
-function getAuthProvider(user: User) {
-  return typeof user.app_metadata?.provider === "string"
-    ? user.app_metadata.provider
-    : "email";
-}
-
-function getIdentityProviders(user: User) {
-  return new Set((user.identities ?? []).map((identity: UserIdentity) => identity.provider));
-}
-
-function isPasswordAccount(user: User) {
-  const providers = getIdentityProviders(user);
-  return (
-    providers.has("email") ||
-    getAuthProvider(user) === "email" ||
-    user.user_metadata?.has_password === true
-  );
-}
 
 function mapUpdatePasswordError(raw: string) {
   const lower = raw.toLowerCase();
@@ -67,20 +48,6 @@ export async function updateProfileAction(
   _prevState: ProfileMessage | undefined,
   formData: FormData,
 ): Promise<ProfileMessage> {
-  const parsed = profileSchema.safeParse({
-    firstName: String(formData.get("firstName") ?? ""),
-    lastName: String(formData.get("lastName") ?? ""),
-    username: String(formData.get("username") ?? ""),
-    role: String(formData.get("role") ?? ""),
-    region: String(formData.get("region") ?? ""),
-    city: String(formData.get("city") ?? ""),
-    bio: String(formData.get("bio") ?? ""),
-  });
-
-  if (!parsed.success) {
-    return { ok: false };
-  }
-
   const supabase = await createClient();
   const {
     data: { user },
@@ -97,7 +64,21 @@ export async function updateProfileAction(
     .maybeSingle();
 
   if (profileError || !currentProfile) {
-    return { ok: false, message: "Не вдалося завантажити профіль." };
+    return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
+  }
+
+  const parsed = profileSchema.safeParse({
+    firstName: String(formData.get("firstName") ?? ""),
+    lastName: String(formData.get("lastName") ?? ""),
+    username: String(formData.get("username") ?? ""),
+    role: String(formData.get("role") ?? ""),
+    region: String(formData.get("region") ?? ""),
+    city: String(formData.get("city") ?? ""),
+    bio: String(formData.get("bio") ?? ""),
+  });
+
+  if (!parsed.success) {
+    return { ok: false };
   }
 
   if (currentProfile.username.toLowerCase() !== parsed.data.username.trim().toLowerCase()) {
@@ -197,10 +178,20 @@ export async function updatePasswordAction(
     return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
+  const { data: currentProfile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError || !currentProfile) {
+    return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
+  }
+
   const currentPassword = String(formData.get("currentPassword") ?? "");
   const newPassword = String(formData.get("newPassword") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
-  const hasPassword = isPasswordAccount(user);
+  const hasPassword = userHasPassword(user);
 
   if (hasPassword) {
     const parsed = profilePasswordSchema.safeParse({
@@ -270,14 +261,6 @@ export async function deleteAccountAction(
   _prevState: ProfileMessage | undefined,
   formData: FormData,
 ): Promise<ProfileMessage> {
-  const parsed = profileDeleteSchema.safeParse({
-    password: String(formData.get("password") ?? ""),
-  });
-
-  if (!parsed.success) {
-    return { ok: false };
-  }
-
   const supabase = await createClient();
   const {
     data: { user },
@@ -287,11 +270,29 @@ export async function deleteAccountAction(
     return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
-  if (!isPasswordAccount(user) || !user.email) {
+  const { data: currentProfile, error: profileError } = await supabase
+    .from("profiles")
+    .select("avatar_path, is_admin")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError || !currentProfile) {
+    return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
+  }
+
+  if (!userHasPassword(user) || !user.email) {
     return {
       ok: false,
       message: "Видалення через пароль доступне лише для акаунта з входом через email/password.",
     };
+  }
+
+  const parsed = profileDeleteSchema.safeParse({
+    password: String(formData.get("password") ?? ""),
+  });
+
+  if (!parsed.success) {
+    return { ok: false };
   }
 
   const verifier = createStatelessAuthClient();
@@ -304,13 +305,6 @@ export async function deleteAccountAction(
     return { ok: false, message: "Невірний пароль." };
   }
 
-  const admin = createServiceRoleClient();
-  const { data: currentProfile } = await supabase
-    .from("profiles")
-    .select("avatar_path, is_admin")
-    .eq("id", user.id)
-    .maybeSingle();
-
   if (currentProfile?.is_admin) {
     return { ok: false, message: "Адміністраторський акаунт не можна видалити зі сторінки профілю." };
   }
@@ -319,6 +313,7 @@ export async function deleteAccountAction(
     await supabase.storage.from("profile-images").remove([currentProfile.avatar_path]);
   }
 
+  const admin = createServiceRoleClient();
   const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
 
   if (deleteError) {

@@ -1,11 +1,23 @@
 import Link from "next/link";
+import { HomeErrorToast } from "@/components/features/home/home-error-toast";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { ChevronRight, Sparkles } from "lucide-react";
 
-export default function Home() {
+type HomeProps = {
+  searchParams?: Promise<{
+    error?: string | string[];
+  }>;
+};
+
+export default async function Home({ searchParams }: HomeProps) {
+  const params = (await searchParams) ?? {};
+  const error = Array.isArray(params.error) ? params.error[0] : params.error;
+
   return (
     <section className="container mx-auto px-6 flex-1 flex flex-col justify-between py-12">
+      <HomeErrorToast key={error ?? "home"} error={error} />
+
       <div className="flex flex-col items-center text-center mt-12 md:mt-24 gap-6">
         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-1.5 text-[10px] md:text-xs font-bold text-blue-600 border border-blue-100 uppercase tracking-widest">
           <Sparkles className="h-3 w-3" /> AI-Powered Matchmaking
