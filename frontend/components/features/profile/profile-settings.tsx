@@ -66,6 +66,7 @@ export function ProfileSettings({
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [avatarInputVersion, setAvatarInputVersion] = useState(0);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(initialProfile.avatarUrl);
+  const [detectedAdmin, setDetectedAdmin] = useState(isAdmin);
   const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(() => {
     if (typeof window === "undefined") {
       return null;
@@ -171,6 +172,7 @@ export function ProfileSettings({
     undefined,
   );
   const [deleteState, deleteFormAction, deletePending] = useActionState(deleteAccountAction, undefined);
+  const currentIsAdmin = isAdmin || detectedAdmin || deleteState?.reason === "adminAccount";
 
   const redirectToHome = useCallback((reason?: "profile_not_found") => {
     router.replace(reason ? `/?error=${reason}` : "/");
@@ -190,7 +192,7 @@ export function ProfileSettings({
 
     const { data: profile, error } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, is_admin")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -199,8 +201,43 @@ export function ProfileSettings({
       return false;
     }
 
+    if (profile.is_admin) {
+      setDetectedAdmin(true);
+    }
+
     return true;
   }, [redirectToHome]);
+
+  const ensureAccountDeletable = useCallback(async () => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      redirectToHome();
+      return false;
+    }
+
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("id, is_admin")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error || !profile) {
+      redirectToHome("profile_not_found");
+      return false;
+    }
+
+    if (profile.is_admin) {
+      setDetectedAdmin(true);
+      router.refresh();
+      return false;
+    }
+
+    return true;
+  }, [redirectToHome, router]);
 
   useEffect(() => {
     return () => {
@@ -225,12 +262,17 @@ export function ProfileSettings({
 
       const { data: profile, error } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, is_admin")
         .eq("id", user.id)
         .maybeSingle();
 
       if (error || !profile) {
         redirectToHome("profile_not_found");
+        return;
+      }
+
+      if (profile.is_admin) {
+        setDetectedAdmin(true);
       }
     }
 
@@ -444,7 +486,7 @@ export function ProfileSettings({
 
   const handleDeleteFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureProfileAvailable().then((isAvailable) => {
+    void ensureAccountDeletable().then((isAvailable) => {
       if (isAvailable) {
         void deleteForm.handleSubmit(onDeleteSubmit)(event);
       }
@@ -469,6 +511,7 @@ export function ProfileSettings({
           avatarInputVersion={avatarInputVersion}
           onAvatarChange={handleAvatarChange}
           onAvatarRemove={handleAvatarRemove}
+          isAdmin={currentIsAdmin}
         />
 
         <div className="grid gap-6">
@@ -507,17 +550,16 @@ export function ProfileSettings({
             />
           )}
 
-          {!isAdmin ? (
-            <ProfileDangerZoneCard
-              form={deleteForm}
-              state={deleteState}
-              pending={deletePending}
-              action={deleteFormAction}
-              onSubmit={handleDeleteFormSubmit}
-              onReset={resetDeleteForm}
-              canDeleteWithPassword={canDeleteWithPassword}
-            />
-          ) : null}
+          <ProfileDangerZoneCard
+            form={deleteForm}
+            state={deleteState}
+            pending={deletePending}
+            action={deleteFormAction}
+            onSubmit={handleDeleteFormSubmit}
+            onReset={resetDeleteForm}
+            canDeleteWithPassword={canDeleteWithPassword}
+            isAdmin={currentIsAdmin}
+          />
         </div>
       </div>
     </section>

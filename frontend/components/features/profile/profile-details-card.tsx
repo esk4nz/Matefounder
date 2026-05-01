@@ -33,6 +33,7 @@ type Props = {
   onReset: () => void;
   avatarPreviewUrl: string | null;
   avatarInputVersion: number;
+  isAdmin: boolean;
   onAvatarChange: (file: File | null) => void;
   onAvatarRemove: () => void;
 };
@@ -46,6 +47,7 @@ export function ProfileDetailsCard({
   onReset,
   avatarPreviewUrl,
   avatarInputVersion,
+  isAdmin,
   onAvatarChange,
   onAvatarRemove,
 }: Props) {
@@ -73,6 +75,16 @@ export function ProfileDetailsCard({
           Ім&apos;я, логін, фото, роль у пошуку та короткий опис себе. Це бачать інші
           користувачі.
         </CardDescription>
+        {isAdmin ? (
+          <div className="rounded-2xl border border-blue-200 bg-blue-50/90 px-4 py-3 text-blue-900">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-700">
+              Адміністраторський акаунт
+            </p>
+            <p className="mt-1 text-sm font-semibold">
+              Цей профіль має права адміністратора.
+            </p>
+          </div>
+        ) : null}
       </CardHeader>
       <CardContent>
         <form action={action} noValidate className="grid gap-5" onSubmit={onSubmit}>

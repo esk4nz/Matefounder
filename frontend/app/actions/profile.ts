@@ -20,7 +20,7 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
-  reason?: "unauthenticated" | "missingProfile";
+  reason?: "unauthenticated" | "missingProfile" | "adminAccount";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
   };
@@ -270,7 +270,8 @@ export async function deleteAccountAction(
     return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
-  const { data: currentProfile, error: profileError } = await supabase
+  const admin = createServiceRoleClient();
+  const { data: currentProfile, error: profileError } = await admin
     .from("profiles")
     .select("avatar_path, is_admin")
     .eq("id", user.id)
@@ -278,6 +279,14 @@ export async function deleteAccountAction(
 
   if (profileError || !currentProfile) {
     return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
+  }
+
+  if (currentProfile.is_admin) {
+    return {
+      ok: false,
+      message: "Адміністраторський акаунт не можна видалити зі сторінки профілю.",
+      reason: "adminAccount",
+    };
   }
 
   if (!userHasPassword(user) || !user.email) {
@@ -305,15 +314,10 @@ export async function deleteAccountAction(
     return { ok: false, message: "Невірний пароль." };
   }
 
-  if (currentProfile?.is_admin) {
-    return { ok: false, message: "Адміністраторський акаунт не можна видалити зі сторінки профілю." };
-  }
-
   if (currentProfile?.avatar_path) {
     await supabase.storage.from("profile-images").remove([currentProfile.avatar_path]);
   }
 
-  const admin = createServiceRoleClient();
   const { error: deleteError } = await admin.auth.admin.deleteUser(user.id);
 
   if (deleteError) {

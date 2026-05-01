@@ -23,6 +23,7 @@ type Props = {
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onReset: () => void;
   canDeleteWithPassword: boolean;
+  isAdmin: boolean;
 };
 
 export function ProfileDangerZoneCard({
@@ -33,6 +34,7 @@ export function ProfileDangerZoneCard({
   onSubmit,
   onReset,
   canDeleteWithPassword,
+  isAdmin,
 }: Props) {
   const { errors } = useFormState({
     control: form.control,
@@ -48,7 +50,14 @@ export function ProfileDangerZoneCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
-        {canDeleteWithPassword ? (
+        {isAdmin ? (
+          <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+            <p className="font-black uppercase tracking-[0.16em]">Видалення заборонено</p>
+            <p className="mt-2 font-medium">
+              Адміністраторські акаунти не можна видалити зі сторінки профілю.
+            </p>
+          </div>
+        ) : canDeleteWithPassword ? (
           <form action={action} noValidate className="flex flex-1 flex-col gap-4" onSubmit={onSubmit}>
             <div className="grid gap-1">
               <Label
