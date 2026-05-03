@@ -36,6 +36,7 @@ import { ProfilePasswordCard } from "@/components/features/profile/profile-passw
 import { ProfileSetPasswordCard } from "@/components/features/profile/profile-set-password-card";
 import type { ProfileSettingsProps } from "@/components/features/profile/profile-types";
 import { createClient } from "@/lib/supabase/client";
+import { dispatchNavbarSync } from "@/lib/navbar-sync";
 
 const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
 
@@ -66,15 +67,16 @@ export function ProfileSettings({
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [avatarInputVersion, setAvatarInputVersion] = useState(0);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(initialProfile.avatarUrl);
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
+  const [verifiedIsAdmin, setVerifiedIsAdmin] = useState<boolean | null>(null);
+  const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(null);
 
+  useEffect(() => {
     const message = window.sessionStorage.getItem(PROFILE_SUCCESS_MESSAGE_KEY);
-    window.sessionStorage.removeItem(PROFILE_SUCCESS_MESSAGE_KEY);
-    return message;
-  });
+    if (message) {
+      window.sessionStorage.removeItem(PROFILE_SUCCESS_MESSAGE_KEY);
+      setProfileSuccessMessage(message);
+    }
+  }, []);
 
   const profileForm = useForm<ProfileValues, undefined, NormalizedProfileValues>({
     resolver: zodResolver(profileSchema),
@@ -155,6 +157,7 @@ export function ProfileSettings({
       setProfileSuccessMessage(successMessage);
       window.sessionStorage.setItem(PROFILE_SUCCESS_MESSAGE_KEY, successMessage);
       router.refresh();
+      dispatchNavbarSync();
     } else if (!nextState.ok) {
       setProfileSuccessMessage(null);
     }
@@ -172,7 +175,26 @@ export function ProfileSettings({
   );
   const [deleteState, deleteFormAction, deletePending] = useActionState(deleteAccountAction, undefined);
 
+  const applyVerifiedRole = useCallback(
+    (isAdminFromDb: boolean) => {
+      setVerifiedIsAdmin(isAdminFromDb);
+      if (isAdminFromDb !== isAdmin) {
+        router.refresh();
+      }
+      dispatchNavbarSync();
+    },
+    [isAdmin, router],
+  );
+
+  useEffect(() => {
+    setVerifiedIsAdmin(null);
+  }, [isAdmin]);
+
+  const currentIsAdmin = verifiedIsAdmin !== null ? verifiedIsAdmin : isAdmin;
+  const effectiveCanDeleteWithPassword = hasPassword && !currentIsAdmin;
+
   const redirectToHome = useCallback((reason?: "profile_not_found") => {
+    dispatchNavbarSync();
     router.replace(reason ? `/?error=${reason}` : "/");
     router.refresh();
   }, [router]);
@@ -190,7 +212,7 @@ export function ProfileSettings({
 
     const { data: profile, error } = await supabase
       .from("profiles")
-      .select("id")
+      .select("id, is_admin")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -199,8 +221,41 @@ export function ProfileSettings({
       return false;
     }
 
+    applyVerifiedRole(profile.is_admin === true);
+
     return true;
-  }, [redirectToHome]);
+  }, [applyVerifiedRole, redirectToHome]);
+
+  const ensureAccountDeletable = useCallback(async () => {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      redirectToHome();
+      return false;
+    }
+
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("id, is_admin")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (error || !profile) {
+      redirectToHome("profile_not_found");
+      return false;
+    }
+
+    if (profile.is_admin) {
+      applyVerifiedRole(true);
+      return false;
+    }
+
+    applyVerifiedRole(false);
+    return true;
+  }, [applyVerifiedRole, redirectToHome]);
 
   useEffect(() => {
     return () => {
@@ -225,13 +280,16 @@ export function ProfileSettings({
 
       const { data: profile, error } = await supabase
         .from("profiles")
-        .select("id")
+        .select("id, is_admin")
         .eq("id", user.id)
         .maybeSingle();
 
       if (error || !profile) {
         redirectToHome("profile_not_found");
+        return;
       }
+
+      applyVerifiedRole(profile.is_admin === true);
     }
 
     void redirectIfProfileUnavailable();
@@ -248,7 +306,7 @@ export function ProfileSettings({
     });
 
     return () => subscription.unsubscribe();
-  }, [redirectToHome]);
+  }, [applyVerifiedRole, redirectToHome]);
 
   useEffect(() => {
     if (
@@ -270,6 +328,15 @@ export function ProfileSettings({
   }, [deleteState, passwordState, profileState, redirectToHome]);
 
   useEffect(() => {
+    if (deleteState?.reason !== "adminAccount") {
+      return;
+    }
+    setVerifiedIsAdmin(true);
+    router.refresh();
+    dispatchNavbarSync();
+  }, [deleteState?.reason, router]);
+
+  useEffect(() => {
     if (!passwordState?.ok) {
       return;
     }
@@ -284,6 +351,7 @@ export function ProfileSettings({
       confirmPassword: "",
     });
     router.refresh();
+    dispatchNavbarSync();
   }, [passwordForm, passwordState, router, setPasswordForm]);
 
   const handleAvatarChange = (file: File | null) => {
@@ -417,38 +485,46 @@ export function ProfileSettings({
   const handleProfileFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setProfileSuccessMessage(null);
-    void ensureProfileAvailable().then((isAvailable) => {
-      if (isAvailable) {
-        void profileForm.handleSubmit(onProfileSubmit)(event);
-      }
-    });
+    void profileForm.handleSubmit((data) => {
+      void ensureProfileAvailable().then((isAvailable) => {
+        if (isAvailable) {
+          onProfileSubmit(data);
+        }
+      });
+    })(event);
   };
 
   const handlePasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureProfileAvailable().then((isAvailable) => {
-      if (isAvailable) {
-        void passwordForm.handleSubmit(onPasswordSubmit)(event);
-      }
-    });
+    void passwordForm.handleSubmit((data) => {
+      void ensureProfileAvailable().then((isAvailable) => {
+        if (isAvailable) {
+          onPasswordSubmit(data);
+        }
+      });
+    })(event);
   };
 
   const handleSetPasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureProfileAvailable().then((isAvailable) => {
-      if (isAvailable) {
-        void setPasswordForm.handleSubmit(onSetPasswordSubmit)(event);
-      }
-    });
+    void setPasswordForm.handleSubmit((data) => {
+      void ensureProfileAvailable().then((isAvailable) => {
+        if (isAvailable) {
+          onSetPasswordSubmit(data);
+        }
+      });
+    })(event);
   };
 
   const handleDeleteFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void ensureProfileAvailable().then((isAvailable) => {
-      if (isAvailable) {
-        void deleteForm.handleSubmit(onDeleteSubmit)(event);
-      }
-    });
+    void deleteForm.handleSubmit((data) => {
+      void ensureAccountDeletable().then((isAvailable) => {
+        if (isAvailable) {
+          onDeleteSubmit(data);
+        }
+      });
+    })(event);
   };
 
   return (
@@ -469,6 +545,7 @@ export function ProfileSettings({
           avatarInputVersion={avatarInputVersion}
           onAvatarChange={handleAvatarChange}
           onAvatarRemove={handleAvatarRemove}
+          isAdmin={currentIsAdmin}
         />
 
         <div className="grid gap-6">
@@ -507,17 +584,16 @@ export function ProfileSettings({
             />
           )}
 
-          {!isAdmin ? (
-            <ProfileDangerZoneCard
-              form={deleteForm}
-              state={deleteState}
-              pending={deletePending}
-              action={deleteFormAction}
-              onSubmit={handleDeleteFormSubmit}
-              onReset={resetDeleteForm}
-              canDeleteWithPassword={canDeleteWithPassword}
-            />
-          ) : null}
+          <ProfileDangerZoneCard
+            form={deleteForm}
+            state={deleteState}
+            pending={deletePending}
+            action={deleteFormAction}
+            onSubmit={handleDeleteFormSubmit}
+            onReset={resetDeleteForm}
+            canDeleteWithPassword={effectiveCanDeleteWithPassword}
+            isAdmin={currentIsAdmin}
+          />
         </div>
       </div>
     </section>
