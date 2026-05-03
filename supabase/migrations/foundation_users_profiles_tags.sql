@@ -1,24 +1,6 @@
--- =============================================================================
--- Matefounder — міграція 1 з 2: ФУНДАМЕНТ
--- =============================================================================
--- Усе, що стосується користувачів, профілів, тегів і тригерів. Без цього шару
--- решта схеми (оголошення, чат, …) не матиме на що спиратися.
---
--- Сумісність: Supabase використовує PostgreSQL. Тут — звичайний SQL (DDL),
--- Row Level Security, функції/trigger-и PL/pgSQL, розширення pgvector (`vector`)
--- у тій формі, яку підтримує Supabase.
---
--- Мова продукту: інтерфейс сайту — українською. Поле tags.slug — лише технічний
--- стабільний ключ для коду (фільтри, API, міграції); користувачу показуємо
--- tags.label_uk. Це не «англомовна версія сайту», а зручність для розробки.
--- =============================================================================
-
 create extension if not exists "pgcrypto";
 create extension if not exists vector;
 
--- ---------------------------------------------------------------------------
--- Довідник тегів (модерація: увімкнення/вимкнення через is_active)
--- ---------------------------------------------------------------------------
 create table public.tags (
   id smallserial primary key,
   slug text not null unique,
@@ -27,9 +9,6 @@ create table public.tags (
   created_at timestamptz not null default now()
 );
 
--- ---------------------------------------------------------------------------
--- Профіль (1:1 з auth.users). Рядок створює тригер після реєстрації.
--- ---------------------------------------------------------------------------
 create table public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   username text not null,
@@ -54,13 +33,13 @@ create table public.profiles (
     budget_min is null
     or budget_max is null
     or budget_min <= budget_max
-  )
+  ),
+  constraint profiles_no_admin_while_blocked check (not (is_admin and is_blocked))
 );
 
 create unique index if not exists profiles_username_lower_idx
   on public.profiles (lower(username));
 
--- Реєстрація (server): перевірка зайнятості логіну через RPC `username_is_taken` (case-insensitive).
 create or replace function public.username_is_taken(candidate text)
 returns boolean
 language sql
@@ -82,7 +61,6 @@ create index if not exists profiles_city_idx
   on public.profiles (city)
   where city is not null and not is_blocked;
 
--- Семантичний пошук: розмір вектора має відповідати обраній embedding-моделі.
 create index if not exists profiles_embedding_hnsw_idx
   on public.profiles
   using hnsw (embedding vector_cosine_ops)
@@ -94,9 +72,6 @@ create table public.profile_tags (
   primary key (profile_id, tag_id)
 );
 
--- ---------------------------------------------------------------------------
--- Тригер: після signup створюємо profiles з user_metadata (Supabase Auth)
--- ---------------------------------------------------------------------------
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -120,9 +95,6 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure public.handle_new_user();
 
--- ---------------------------------------------------------------------------
--- Оновлення updated_at для профілів (таблиця listings — у міграції 2)
--- ---------------------------------------------------------------------------
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
@@ -138,14 +110,10 @@ create trigger profiles_set_updated_at
   before update on public.profiles
   for each row execute procedure public.set_updated_at();
 
--- ---------------------------------------------------------------------------
--- RLS: теги, профілі, зв’язок профіль–тег
--- ---------------------------------------------------------------------------
 alter table public.tags enable row level security;
 alter table public.profiles enable row level security;
 alter table public.profile_tags enable row level security;
 
--- is_admin / is_blocked з клієнта не змінюються (лише повні права в SQL / service role)
 revoke update on public.profiles from authenticated;
 grant update (
   username,
@@ -256,9 +224,6 @@ create policy "profile_images_delete_own"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- ---------------------------------------------------------------------------
--- Початкові теги (підпис українською для UI; slug — для коду)
--- ---------------------------------------------------------------------------
 insert into public.tags (slug, label_uk) values
   ('quiet', 'Спокій у домі'),
   ('no_smoking', 'Без куріння'),
@@ -270,3 +235,69 @@ insert into public.tags (slug, label_uk) values
   ('guests_ok', 'Гості за домовленістю'),
   ('study_focus', 'Фокус на навчанні / роботі')
 on conflict (slug) do nothing;
+
+drop function if exists public.admin_console_list_users(text, integer);
+create or replace function public.admin_console_list_users(
+  p_search text,
+  p_limit integer,
+  p_offset integer
+)
+returns table (
+  id uuid,
+  username text,
+  avatar_path text,
+  is_blocked boolean,
+  is_admin boolean,
+  email text,
+  updated_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_raw text;
+  v_lim int;
+  v_off int;
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+
+  if not exists (
+    select 1 from public.profiles pr
+    where pr.id = auth.uid() and pr.is_admin = true
+  ) then
+    raise exception 'forbidden';
+  end if;
+
+  v_raw := trim(coalesce(p_search, ''));
+  v_lim := coalesce(nullif(p_limit, 0), 10);
+  if v_lim < 1 or v_lim > 100 then
+    v_lim := 10;
+  end if;
+  v_off := greatest(coalesce(p_offset, 0), 0);
+
+  return query
+  select
+    p.id,
+    p.username,
+    p.avatar_path,
+    p.is_blocked,
+    p.is_admin,
+    u.email::text,
+    p.updated_at
+  from public.profiles p
+  inner join auth.users u on u.id = p.id
+  where v_raw = ''
+     or position(lower(v_raw) in lower(p.username)) > 0
+     or position(lower(v_raw) in lower(u.email)) > 0
+  order by p.created_at desc
+  limit v_lim
+  offset v_off;
+end;
+$$;
+
+revoke all on function public.admin_console_list_users(text, integer, integer) from public;
+grant execute on function public.admin_console_list_users(text, integer, integer) to authenticated;

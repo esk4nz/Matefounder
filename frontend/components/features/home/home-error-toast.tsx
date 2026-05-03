@@ -3,18 +3,23 @@
 import { AlertTriangle, X } from "lucide-react";
 import { useEffect, useState } from "react";
 
-const PROFILE_NOT_FOUND_MESSAGE =
-  "Ой! Ваш профіль не знайдено. Будь ласка, зверніться в підтримку або спробуйте зайти знову";
+const ERROR_MESSAGES: Record<string, string> = {
+  profile_not_found:
+    "Ой! Ваш профіль не знайдено. Будь ласка, зверніться в підтримку або спробуйте зайти знову",
+  admin_required:
+    "Доступ до консолі адміністрування для цього сеансу скасовано (права адміністратора змінено).",
+};
 
 type Props = {
   error?: string;
 };
 
 export function HomeErrorToast({ error }: Props) {
-  const [visible, setVisible] = useState(error === "profile_not_found");
+  const message = error ? ERROR_MESSAGES[error] : undefined;
+  const [visible, setVisible] = useState(() => Boolean(message));
 
   useEffect(() => {
-    if (error !== "profile_not_found") {
+    if (!error || !ERROR_MESSAGES[error]) {
       return;
     }
 
@@ -29,7 +34,7 @@ export function HomeErrorToast({ error }: Props) {
     return () => window.clearTimeout(timer);
   }, [error]);
 
-  if (!visible) {
+  if (!visible || !message) {
     return null;
   }
 
@@ -41,7 +46,7 @@ export function HomeErrorToast({ error }: Props) {
       <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-red-50 text-red-600">
         <AlertTriangle className="h-5 w-5" />
       </span>
-      <p className="text-sm font-semibold leading-6 text-slate-800">{PROFILE_NOT_FOUND_MESSAGE}</p>
+      <p className="text-sm font-semibold leading-6 text-slate-800">{message}</p>
       <button
         type="button"
         aria-label="Закрити повідомлення"

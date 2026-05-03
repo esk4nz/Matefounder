@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { NavbarAdminLinks } from "@/components/layout/navbar-admin-links";
 import { NavbarAuthControls } from "@/components/layout/navbar-auth-controls";
 import { createClient } from "@/lib/supabase/server";
 
@@ -9,15 +10,17 @@ export default async function Navbar() {
   } = await supabase.auth.getUser();
 
   let navLabel = user?.email ?? "";
+  let isAdmin = false;
   if (user?.id) {
     const { data: profile } = await supabase
       .from("profiles")
-      .select("username")
+      .select("username, is_admin")
       .eq("id", user.id)
       .maybeSingle();
     if (profile?.username) {
       navLabel = profile.username;
     }
+    isAdmin = profile?.is_admin === true;
   }
 
   return (
@@ -44,6 +47,7 @@ export default async function Navbar() {
             >
               Як це працює
             </Link>
+            <NavbarAdminLinks initialIsAdmin={isAdmin} hasUser={Boolean(user?.id)} />
           </div>
         </div>
 
