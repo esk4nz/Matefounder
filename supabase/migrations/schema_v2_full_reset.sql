@@ -1,19 +1,7 @@
--- =============================================================================
--- Matefounder — схема v2 (повне перестворення public-таблиць застосунку)
--- =============================================================================
--- Призначення: одна міграція з новою структурою БД. Попередні файли міграцій
--- залишаються в репозиторії лише як архів; цей файл при застосуванні знімає
--- старі таблиці/політики та створює актуальну модель.
---
--- Перед продакшеном: зробіть бекап і застосуйте усвідомлено (руйнівні зміни).
--- =============================================================================
-
 create extension if not exists pgcrypto;
 create extension if not exists vector;
 
--- ---------------------------------------------------------------------------
--- Зняти тригер реєстрації та залежності від старої схеми
--- ---------------------------------------------------------------------------
+-- DROP: on_auth_user_created, storage policies (profile-images), таблиці, функції.
 drop trigger if exists on_auth_user_created on auth.users;
 
 drop policy if exists "profile_images_public_read" on storage.objects;
@@ -21,7 +9,6 @@ drop policy if exists "profile_images_insert_own" on storage.objects;
 drop policy if exists "profile_images_update_own" on storage.objects;
 drop policy if exists "profile_images_delete_own" on storage.objects;
 
--- Таблиці — порядок з урахуванням FK
 drop table if exists public.user_matches cascade;
 drop table if exists public.reports cascade;
 drop table if exists public.reviews cascade;
@@ -42,9 +29,7 @@ drop function if exists public.set_updated_at() cascade;
 drop function if exists public.username_is_taken(text) cascade;
 drop function if exists public.admin_console_list_users(text, integer, integer) cascade;
 
--- ---------------------------------------------------------------------------
--- Довідники географії
--- ---------------------------------------------------------------------------
+-- regions, cities
 create table public.regions (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -61,9 +46,7 @@ create table public.cities (
 create index if not exists cities_region_id_idx on public.cities (region_id);
 create index if not exists cities_region_name_idx on public.cities (region_id, lower(name));
 
--- ---------------------------------------------------------------------------
--- Профілі та теги
--- ---------------------------------------------------------------------------
+-- profiles, tags, profile_tags
 create table public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
   username text not null,
@@ -109,9 +92,7 @@ create table public.profile_tags (
 
 create index if not exists profile_tags_tag_id_idx on public.profile_tags (tag_id);
 
--- ---------------------------------------------------------------------------
--- Оголошення та зображення
--- ---------------------------------------------------------------------------
+-- listings, listing_images
 create table public.listings (
   id uuid primary key default gen_random_uuid(),
   creator_id uuid not null references public.profiles (id) on delete cascade,
@@ -146,9 +127,7 @@ create table public.listing_images (
 create index if not exists listing_images_listing_order_idx
   on public.listing_images (listing_id, order_index);
 
--- ---------------------------------------------------------------------------
--- Чат
--- ---------------------------------------------------------------------------
+-- chat_rooms, chat_participants, chat_messages
 create table public.chat_rooms (
   id uuid primary key default gen_random_uuid(),
   is_accepted boolean not null default false,
@@ -176,9 +155,7 @@ create table public.chat_messages (
 create index if not exists chat_messages_room_created_idx
   on public.chat_messages (room_id, created_at desc);
 
--- ---------------------------------------------------------------------------
--- Відгуки, скарги, блокування, метчі
--- ---------------------------------------------------------------------------
+-- reviews, reports, user_blocks, user_matches
 create table public.reviews (
   id bigint generated always as identity primary key,
   author_id uuid not null references public.profiles (id) on delete cascade,
@@ -226,9 +203,7 @@ create table public.user_matches (
 create index if not exists user_matches_user_score_idx
   on public.user_matches (user_id, score desc nulls last);
 
--- ---------------------------------------------------------------------------
--- Функції та тригери
--- ---------------------------------------------------------------------------
+-- functions, triggers
 create or replace function public.handle_new_user()
 returns trigger
 language plpgsql
@@ -297,7 +272,7 @@ $$;
 revoke all on function public.username_is_taken(text) from public;
 grant execute on function public.username_is_taken(text) to service_role;
 
--- Допоміжна перевірка: чи є між двома користувачами кімната з is_accepted
+-- RLS reviews.insert
 create or replace function public.review_allowed_by_chat(
   p_author uuid,
   p_target uuid
@@ -387,7 +362,7 @@ $$;
 revoke all on function public.admin_console_list_users(text, integer, integer) from public;
 grant execute on function public.admin_console_list_users(text, integer, integer) to authenticated;
 
--- Функція, яка перевіряє, чи обидва учасники написали повідомлення
+-- chat_rooms.is_accepted: true, якщо у room_id більше 2 distinct sender_id у chat_messages.
 create or replace function public.check_chat_accepted()
 returns trigger
 language plpgsql
@@ -397,12 +372,10 @@ as $$
 declare
   v_sender_count int;
 begin
-  -- Рахуємо кількість унікальних відправників у цій кімнаті
   select count(distinct sender_id) into v_sender_count
   from public.chat_messages
   where room_id = new.room_id;
 
-  -- Якщо є повідомлення від 2-х різних юзерів, активуємо чат
   if v_sender_count >= 2 then
     update public.chat_rooms
     set is_accepted = true
@@ -413,14 +386,11 @@ begin
 end;
 $$;
 
--- Тригер, що спрацьовує при кожному новому повідомленні
 create trigger on_chat_message_insert
   after insert on public.chat_messages
   for each row execute procedure public.check_chat_accepted();
 
--- ---------------------------------------------------------------------------
 -- RLS
--- ---------------------------------------------------------------------------
 alter table public.regions enable row level security;
 alter table public.cities enable row level security;
 alter table public.profiles enable row level security;
@@ -436,7 +406,7 @@ alter table public.reports enable row level security;
 alter table public.user_blocks enable row level security;
 alter table public.user_matches enable row level security;
 
--- Довідники: читання для автентифікованих; зміни — лише адміни
+-- RLS regions, cities
 drop policy if exists "regions_select_authenticated" on public.regions;
 create policy "regions_select_authenticated"
   on public.regions for select
@@ -471,7 +441,7 @@ create policy "cities_write_admin"
     exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
   );
 
--- Профілі
+-- RLS profiles
 drop policy if exists "profiles_select_discovery" on public.profiles;
 create policy "profiles_select_discovery"
   on public.profiles for select
@@ -503,7 +473,7 @@ create policy "profiles_insert_own"
   to authenticated
   with check (id = auth.uid());
 
--- Теги
+-- RLS tags, profile_tags
 drop policy if exists "tags_select_authenticated" on public.tags;
 create policy "tags_select_authenticated"
   on public.tags for select
@@ -543,7 +513,7 @@ create policy "profile_tags_delete_own_not_blocked"
     )
   );
 
--- Оголошення
+-- RLS listings
 drop policy if exists "listings_select_discovery" on public.listings;
 create policy "listings_select_discovery"
   on public.listings for select
@@ -583,7 +553,7 @@ create policy "listings_delete_own"
   to authenticated
   using (creator_id = auth.uid());
 
--- Зображення оголошень
+-- RLS listing_images
 drop policy if exists "listing_images_select_visible" on public.listing_images;
 create policy "listing_images_select_visible"
   on public.listing_images for select
@@ -646,7 +616,7 @@ create policy "listing_images_delete_creator"
     )
   );
 
--- Чат: кімнати — учасники або адміни
+-- RLS chat_rooms, chat_participants, chat_messages
 drop policy if exists "chat_rooms_select_participant_or_admin" on public.chat_rooms;
 create policy "chat_rooms_select_participant_or_admin"
   on public.chat_rooms for select
@@ -738,7 +708,7 @@ create policy "chat_messages_insert_participant_not_blocked"
     )
   );
 
--- Відгуки: лише після «прийнятого» чату; автор не заблокований
+-- RLS reviews
 drop policy if exists "reviews_select_related" on public.reviews;
 create policy "reviews_select_related"
   on public.reviews for select
@@ -761,7 +731,7 @@ create policy "reviews_insert_when_chat_accepted"
     and public.review_allowed_by_chat(author_id, target_id)
   );
 
--- Скарги: створення — звичайний користувач; перегляд/зміна — адміни
+-- RLS reports
 drop policy if exists "reports_insert_own_not_blocked" on public.reports;
 create policy "reports_insert_own_not_blocked"
   on public.reports for insert
@@ -792,7 +762,7 @@ create policy "reports_update_admin"
     exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
   );
 
--- Локальне блокування
+-- RLS user_blocks
 drop policy if exists "user_blocks_select_involved" on public.user_blocks;
 create policy "user_blocks_select_involved"
   on public.user_blocks for select
@@ -816,7 +786,7 @@ create policy "user_blocks_delete_blocker"
   to authenticated
   using (blocker_id = auth.uid());
 
--- Метчі
+-- RLS user_matches
 drop policy if exists "user_matches_select_own" on public.user_matches;
 create policy "user_matches_select_own"
   on public.user_matches for select
@@ -847,9 +817,7 @@ create policy "user_matches_delete_own"
   to authenticated
   using (user_id = auth.uid());
 
--- ---------------------------------------------------------------------------
--- Storage (аватари)
--- ---------------------------------------------------------------------------
+-- storage.buckets, storage.objects
 insert into storage.buckets (id, name, public)
 values ('profile-images', 'profile-images', true)
 on conflict (id) do update
@@ -943,9 +911,7 @@ create policy "listing_images_delete_creator"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- ---------------------------------------------------------------------------
--- Початкові теги (як у попередній міграції)
--- ---------------------------------------------------------------------------
+-- seed tags
 insert into public.tags (slug, label_uk) values
   ('quiet', 'Спокій у домі'),
   ('no_smoking', 'Без куріння'),
@@ -958,134 +924,107 @@ insert into public.tags (slug, label_uk) values
   ('study_focus', 'Фокус на навчанні / роботі')
 on conflict (slug) do nothing;
 
--- ---------------------------------------------------------------------------
--- Початкове наповнення географії (регіони та міста)
--- ---------------------------------------------------------------------------
+-- seed regions, cities (UA)
 do $$
 declare
   r_id uuid;
 begin
-  -- Вінницька область
   insert into public.regions (name) values ('Вінницька область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Вінниця'), (r_id, 'Жмеринка'), (r_id, 'Могилів-Подільський'), (r_id, 'Хмільник');
 
-  -- Волинська область
   insert into public.regions (name) values ('Волинська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Луцьк'), (r_id, 'Ковель'), (r_id, 'Володимир'), (r_id, 'Нововолинськ');
 
-  -- Дніпропетровська область
   insert into public.regions (name) values ('Дніпропетровська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Дніпро'), (r_id, 'Кривий Ріг'), (r_id, 'Кам''янське'), (r_id, 'Нікополь');
 
-  -- Донецька область
   insert into public.regions (name) values ('Донецька область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Краматорськ'), (r_id, 'Слов''янськ'), (r_id, 'Покровськ'), (r_id, 'Бахмут');
 
-  -- Житомирська область
   insert into public.regions (name) values ('Житомирська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Житомир'), (r_id, 'Бердичів'), (r_id, 'Коростень'), (r_id, 'Звягель');
 
-  -- Закарпатська область
   insert into public.regions (name) values ('Закарпатська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Ужгород'), (r_id, 'Мукачево'), (r_id, 'Хуст'), (r_id, 'Берегове');
 
-  -- Запорізька область
   insert into public.regions (name) values ('Запорізька область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Запоріжжя'), (r_id, 'Мелітополь'), (r_id, 'Бердянськ'), (r_id, 'Енергодар');
 
-  -- Івано-Франківська область
   insert into public.regions (name) values ('Івано-Франківська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Івано-Франківськ'), (r_id, 'Калуш'), (r_id, 'Коломия'), (r_id, 'Яремче');
 
-  -- Київська область
   insert into public.regions (name) values ('Київська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Біла Церква'), (r_id, 'Бровари'), (r_id, 'Бориспіль'), (r_id, 'Ірпінь'), (r_id, 'Буча'), (r_id, 'Вишневе');
 
-  -- Кіровоградська область
   insert into public.regions (name) values ('Кіровоградська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Кропивницький'), (r_id, 'Олександрія'), (r_id, 'Світловодськ'), (r_id, 'Знам''янка');
 
-  -- Луганська область
   insert into public.regions (name) values ('Луганська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Сєвєродонецьк'), (r_id, 'Лисичанськ'), (r_id, 'Старобільськ'), (r_id, 'Рубіжне');
 
-  -- Львівська область
   insert into public.regions (name) values ('Львівська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Львів'), (r_id, 'Дрогобич'), (r_id, 'Стрий'), (r_id, 'Червоноград'), (r_id, 'Трускавець');
 
-  -- Миколаївська область
   insert into public.regions (name) values ('Миколаївська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Миколаїв'), (r_id, 'Первомайськ'), (r_id, 'Вознесенськ'), (r_id, 'Южноукраїнськ');
 
-  -- Одеська область
   insert into public.regions (name) values ('Одеська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Одеса'), (r_id, 'Чорноморськ'), (r_id, 'Ізмаїл'), (r_id, 'Подільськ'), (r_id, 'Білгород-Дністровський');
 
-  -- Полтавська область
   insert into public.regions (name) values ('Полтавська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Полтава'), (r_id, 'Кременчук'), (r_id, 'Миргород'), (r_id, 'Лубни');
 
-  -- Рівненська область
   insert into public.regions (name) values ('Рівненська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Рівне'), (r_id, 'Дубно'), (r_id, 'Вараш'), (r_id, 'Сарни');
 
-  -- Сумська область
   insert into public.regions (name) values ('Сумська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Суми'), (r_id, 'Конотоп'), (r_id, 'Шостка'), (r_id, 'Охтирка');
 
-  -- Тернопільська область
   insert into public.regions (name) values ('Тернопільська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Тернопіль'), (r_id, 'Чортків'), (r_id, 'Кременець'), (r_id, 'Бережани');
 
-  -- Харківська область
   insert into public.regions (name) values ('Харківська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Харків'), (r_id, 'Лозова'), (r_id, 'Ізюм'), (r_id, 'Чугуїв');
 
-  -- Херсонська область
   insert into public.regions (name) values ('Херсонська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Херсон'), (r_id, 'Нова Каховка'), (r_id, 'Каховка'), (r_id, 'Генічеськ');
 
-  -- Хмельницька область
   insert into public.regions (name) values ('Хмельницька область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Хмельницький'), (r_id, 'Кам''янець-Подільський'), (r_id, 'Шепетівка'), (r_id, 'Славута');
 
-  -- Черкаська область
   insert into public.regions (name) values ('Черкаська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Черкаси'), (r_id, 'Умань'), (r_id, 'Сміла'), (r_id, 'Золотоноша');
 
-  -- Чернівецька область
   insert into public.regions (name) values ('Чернівецька область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Чернівці'), (r_id, 'Хотин'), (r_id, 'Новодністровськ'), (r_id, 'Сторожинець');
 
-  -- Чернігівська область
   insert into public.regions (name) values ('Чернігівська область') returning id into r_id;
   insert into public.cities (region_id, name) values 
     (r_id, 'Чернігів'), (r_id, 'Ніжин'), (r_id, 'Прилуки'), (r_id, 'Новгород-Сіверський');
 
-  -- м. Київ
   insert into public.regions (name) values ('м. Київ') returning id into r_id;
   insert into public.cities (region_id, name) values (r_id, 'Київ');
 
