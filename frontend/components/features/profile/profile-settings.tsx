@@ -36,6 +36,7 @@ import { ProfilePasswordCard } from "@/components/features/profile/profile-passw
 import { ProfileSetPasswordCard } from "@/components/features/profile/profile-set-password-card";
 import type { ProfileSettingsProps } from "@/components/features/profile/profile-types";
 import { createClient } from "@/lib/supabase/client";
+import { dispatchNavbarSync } from "@/lib/navbar-sync";
 
 const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
 
@@ -156,6 +157,7 @@ export function ProfileSettings({
       setProfileSuccessMessage(successMessage);
       window.sessionStorage.setItem(PROFILE_SUCCESS_MESSAGE_KEY, successMessage);
       router.refresh();
+      dispatchNavbarSync();
     } else if (!nextState.ok) {
       setProfileSuccessMessage(null);
     }
@@ -179,6 +181,7 @@ export function ProfileSettings({
       if (isAdminFromDb !== isAdmin) {
         router.refresh();
       }
+      dispatchNavbarSync();
     },
     [isAdmin, router],
   );
@@ -191,6 +194,7 @@ export function ProfileSettings({
   const effectiveCanDeleteWithPassword = hasPassword && !currentIsAdmin;
 
   const redirectToHome = useCallback((reason?: "profile_not_found") => {
+    dispatchNavbarSync();
     router.replace(reason ? `/?error=${reason}` : "/");
     router.refresh();
   }, [router]);
@@ -329,6 +333,7 @@ export function ProfileSettings({
     }
     setVerifiedIsAdmin(true);
     router.refresh();
+    dispatchNavbarSync();
   }, [deleteState?.reason, router]);
 
   useEffect(() => {
@@ -346,6 +351,7 @@ export function ProfileSettings({
       confirmPassword: "",
     });
     router.refresh();
+    dispatchNavbarSync();
   }, [passwordForm, passwordState, router, setPasswordForm]);
 
   const handleAvatarChange = (file: File | null) => {
