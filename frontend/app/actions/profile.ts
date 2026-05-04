@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   type NormalizedProfileValues,
+  PROFILE_TAG_CATALOG_CHANGED_MESSAGE,
   buildInitialTagFormState,
   createProfileFormSchema,
   flattenProfileTagIds,
@@ -115,7 +116,7 @@ export async function updateProfileAction(
 
   const expanded = buildInitialTagFormState(allTagRows, uniqueIds);
   if (!isTagPayloadConsistentWithIds(allTagRows, uniqueIds, expanded)) {
-    return { ok: false, message: "Некоректний набір тегів." };
+    return { ok: false, message: PROFILE_TAG_CATALOG_CHANGED_MESSAGE };
   }
 
   const profileSchema = createProfileFormSchema(allTagRows);

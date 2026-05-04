@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ProfileTagRow, ProfileTagSelectionsExclusive } from "@/components/features/profile/profile-types";
 
+/** Теги на сервері змінилися (наприклад, адмін прибрав пункт із довідника). */
+export const PROFILE_TAG_CATALOG_CHANGED_MESSAGE =
+  "Список доступних інтересів змінився. Будь ласка, оновіть сторінку, щоб побачити актуальний перелік.";
+
 export const PROFILE_EXCLUSIVE_CATEGORIES = ["habits", "routine", "social", "pets"] as const;
 export type ProfileExclusiveTagCategory = (typeof PROFILE_EXCLUSIVE_CATEGORIES)[number];
 export const PROFILE_INTERESTS_CATEGORY = "interests" as const;
@@ -142,7 +146,7 @@ export function createProfileFormSchema(allTags: readonly ProfileTagRow[]) {
         if (!row || row.category !== cat || !allowed.has(id)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "Некоректний вибір",
+            message: PROFILE_TAG_CATALOG_CHANGED_MESSAGE,
             path: ["tagSelections", cat],
           });
         }
@@ -153,7 +157,7 @@ export function createProfileFormSchema(allTags: readonly ProfileTagRow[]) {
         if (!interestAllowed.has(id)) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "Некоректний тег інтересів",
+            message: PROFILE_TAG_CATALOG_CHANGED_MESSAGE,
             path: ["tagInterests"],
           });
           break;
