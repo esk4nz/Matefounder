@@ -1,75 +1,170 @@
 import { z } from "zod";
-import {
-  PROFILE_ROLE_OPTIONS,
-  getCitiesForRegion,
-  isValidCityForRegion,
-  isValidRegion,
-} from "@/lib/profile/options";
+import type { ProfileTagRow, ProfileTagSelectionsExclusive } from "@/components/features/profile/profile-types";
 
-const profileRoleValues = PROFILE_ROLE_OPTIONS.map((option) => option.value) as [
-  (typeof PROFILE_ROLE_OPTIONS)[number]["value"],
-  ...(typeof PROFILE_ROLE_OPTIONS)[number]["value"][],
-];
+export const PROFILE_EXCLUSIVE_CATEGORIES = ["habits", "routine", "social", "pets"] as const;
+export type ProfileExclusiveTagCategory = (typeof PROFILE_EXCLUSIVE_CATEGORIES)[number];
+export const PROFILE_INTERESTS_CATEGORY = "interests" as const;
 
-const optionalLocationField = z
-  .string()
-  .optional()
-  .transform((value) => value?.trim() ?? "");
+const profileGenderValues = ["male", "female"] as const;
+const profileGenderInputValues = ["", "male", "female"] as const;
 
-export const profileSchema = z.object({
-  firstName: z
-    .string()
-    .min(1, "Ім'я надто коротке")
-    .regex(/^[a-zA-Zа-яА-ЯіІїЇєЄґҐ]+$/, {
-      message: "Ім'я може містити лише букви",
-    }),
-  lastName: z
-    .string()
-    .min(1, "Прізвище надто коротке")
-    .regex(/^[a-zA-Zа-яА-ЯіІїЇєЄґҐ]+$/, {
-      message: "Прізвище може містити лише букви",
-    }),
-  username: z
-    .string()
-    .min(3, "Мінімум 3 символи")
-    .max(20, "Максимум 20 символів")
-    .regex(/^[a-zA-Z0-9_]+$/, {
-      message: "Тільки латиниця, цифри та '_'",
-    }),
-  role: z.enum(profileRoleValues),
-  region: optionalLocationField,
-  city: optionalLocationField,
-  bio: z
-    .string()
-    .max(1000, "Максимум 1000 символів")
-    .optional()
-    .transform((value) => value?.trim() ?? ""),
-}).superRefine((data, ctx) => {
-  if (data.region && !isValidRegion(data.region)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Оберіть область зі списку",
-      path: ["region"],
-    });
-  }
-
-  if (data.city && !data.region) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Спочатку оберіть область",
-      path: ["region"],
-    });
-  }
-
-  if (data.city && data.region && !isValidCityForRegion(data.region, data.city)) {
-    const availableCities = getCitiesForRegion(data.region);
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: availableCities.length ? "Оберіть місто зі списку" : "Для цієї області ще немає списку міст",
-      path: ["city"],
-    });
-  }
+const emptyExclusiveSelections = (): ProfileTagSelectionsExclusive => ({
+  habits: null,
+  routine: null,
+  social: null,
+  pets: null,
 });
+
+export function buildInitialTagFormState(
+  allTags: readonly ProfileTagRow[],
+  selectedTagIds: readonly number[],
+): { tagSelections: ProfileTagSelectionsExclusive; tagInterests: number[] } {
+  const selected = new Set(selectedTagIds);
+  const tagSelections = emptyExclusiveSelections();
+  const tagInterests: number[] = [];
+
+  for (const t of allTags) {
+    if (!selected.has(t.id)) {
+      continue;
+    }
+    if (t.category === PROFILE_INTERESTS_CATEGORY) {
+      tagInterests.push(t.id);
+      continue;
+    }
+    if (t.category === "habits") {
+      tagSelections.habits = t.id;
+    } else if (t.category === "routine") {
+      tagSelections.routine = t.id;
+    } else if (t.category === "social") {
+      tagSelections.social = t.id;
+    } else if (t.category === "pets") {
+      tagSelections.pets = t.id;
+    }
+  }
+
+  return { tagSelections, tagInterests };
+}
+
+export function flattenProfileTagIds(data: {
+  tagSelections: ProfileTagSelectionsExclusive;
+  tagInterests: number[];
+}): number[] {
+  const { tagSelections, tagInterests } = data;
+  const ids = [
+    tagSelections.habits,
+    tagSelections.routine,
+    tagSelections.social,
+    tagSelections.pets,
+    ...tagInterests,
+  ].filter((id): id is number => id !== null && id !== undefined);
+  return [...new Set(ids)];
+}
+
+export function isTagPayloadConsistentWithIds(
+  allTags: readonly ProfileTagRow[],
+  uniqueIds: readonly number[],
+  expanded: { tagSelections: ProfileTagSelectionsExclusive; tagInterests: number[] },
+): boolean {
+  const catalogIds = new Set(allTags.map((t) => t.id));
+  for (const id of uniqueIds) {
+    if (!catalogIds.has(id)) {
+      return false;
+    }
+  }
+  const flat = flattenProfileTagIds(expanded);
+  const recon = new Set(flat);
+  if (uniqueIds.length !== recon.size) {
+    return false;
+  }
+  return uniqueIds.every((id) => recon.has(id));
+}
+
+export function createProfileFormSchema(allTags: readonly ProfileTagRow[]) {
+  const byId = new Map(allTags.map((t) => [t.id, t]));
+  const validIdsForCategory = (category: string) =>
+    new Set(allTags.filter((t) => t.category === category).map((t) => t.id));
+
+  const tagSelectionsSchema = z.object({
+    habits: z.number().int().nullable(),
+    routine: z.number().int().nullable(),
+    social: z.number().int().nullable(),
+    pets: z.number().int().nullable(),
+  });
+
+  return z
+    .object({
+      firstName: z
+        .string()
+        .min(1, "Ім'я надто коротке")
+        .regex(/^[a-zA-Zа-яА-ЯіІїЇєЄґҐ]+$/, {
+          message: "Ім'я може містити лише букви",
+        }),
+      lastName: z
+        .string()
+        .min(1, "Прізвище надто коротке")
+        .regex(/^[a-zA-Zа-яА-ЯіІїЇєЄґҐ]+$/, {
+          message: "Прізвище може містити лише букви",
+        }),
+      username: z
+        .string()
+        .min(3, "Мінімум 3 символи")
+        .max(40, "Максимум 40 символів")
+        .regex(/^[a-zA-Z0-9_]+$/, {
+          message: "Тільки латиниця, цифри та '_'",
+        }),
+      gender: z
+        .enum(profileGenderInputValues)
+        .refine((v) => v === "male" || v === "female", {
+          message: "Оберіть стать",
+        })
+        .transform((v): (typeof profileGenderValues)[number] => v as "male" | "female"),
+      bio: z
+        .string()
+        .max(1000, "Максимум 1000 символів")
+        .optional()
+        .transform((value) => value?.trim() ?? ""),
+      tagSelections: tagSelectionsSchema,
+      tagInterests: z.array(z.number().int()),
+    })
+    .superRefine((data, ctx) => {
+      for (const cat of PROFILE_EXCLUSIVE_CATEGORIES) {
+        const id = data.tagSelections[cat];
+        if (id === null || id === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Оберіть один варіант",
+            path: ["tagSelections", cat],
+          });
+          continue;
+        }
+        const row = byId.get(id);
+        const allowed = validIdsForCategory(cat);
+        if (!row || row.category !== cat || !allowed.has(id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Некоректний вибір",
+            path: ["tagSelections", cat],
+          });
+        }
+      }
+
+      const interestAllowed = validIdsForCategory(PROFILE_INTERESTS_CATEGORY);
+      for (const id of data.tagInterests) {
+        if (!interestAllowed.has(id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Некоректний тег інтересів",
+            path: ["tagInterests"],
+          });
+          break;
+        }
+      }
+    });
+}
+
+export type ProfileFormSchema = ReturnType<typeof createProfileFormSchema>;
+export type ProfileValues = z.input<ProfileFormSchema>;
+export type NormalizedProfileValues = z.output<ProfileFormSchema>;
 
 export const profilePasswordSchema = z
   .object({
@@ -100,8 +195,6 @@ export const profileDeleteSchema = z.object({
   password: z.string().min(1, "Введіть пароль для підтвердження"),
 });
 
-export type ProfileValues = z.input<typeof profileSchema>;
-export type NormalizedProfileValues = z.output<typeof profileSchema>;
 export type ProfilePasswordValues = z.infer<typeof profilePasswordSchema>;
 export type ProfileSetPasswordValues = z.infer<typeof profileSetPasswordSchema>;
 export type ProfileDeleteValues = z.infer<typeof profileDeleteSchema>;

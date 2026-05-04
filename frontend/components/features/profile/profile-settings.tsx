@@ -7,6 +7,7 @@ import {
   useActionState,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -24,10 +25,11 @@ import {
   type ProfilePasswordValues,
   type ProfileSetPasswordValues,
   type ProfileValues,
+  createProfileFormSchema,
+  flattenProfileTagIds,
   profileDeleteSchema,
   profilePasswordSchema,
   profileSetPasswordSchema,
-  profileSchema,
 } from "@/app/schemas/profile";
 import { ProfileDangerZoneCard } from "@/components/features/profile/profile-danger-zone-card";
 import { ProfileDetailsCard } from "@/components/features/profile/profile-details-card";
@@ -35,7 +37,6 @@ import { ProfileEmailCard } from "@/components/features/profile/profile-email-ca
 import { ProfilePasswordCard } from "@/components/features/profile/profile-password-card";
 import { ProfileSetPasswordCard } from "@/components/features/profile/profile-set-password-card";
 import type { ProfileSettingsProps } from "@/components/features/profile/profile-types";
-import { createClient } from "@/lib/supabase/client";
 import { dispatchNavbarSync } from "@/lib/navbar-sync";
 
 const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
@@ -43,6 +44,7 @@ const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
 export function ProfileSettings({
   initialEmail,
   initialProfile,
+  allTags,
   canManageCredentials,
   canDeleteWithPassword,
   hasPassword,
@@ -50,14 +52,15 @@ export function ProfileSettings({
 }: ProfileSettingsProps) {
   const router = useRouter();
   const objectUrlRef = useRef<string | null>(null);
-  const profileDefaultValuesRef = useRef<NormalizedProfileValues>({
+  const profileUpdatedAtRef = useRef(initialProfile.updatedAt);
+  const profileDefaultValuesRef = useRef<ProfileValues>({
     username: initialProfile.username,
     firstName: initialProfile.firstName,
     lastName: initialProfile.lastName,
-    role: initialProfile.role,
-    region: initialProfile.region,
-    city: initialProfile.city,
+    gender: initialProfile.gender,
     bio: initialProfile.bio,
+    tagSelections: initialProfile.tagSelections,
+    tagInterests: initialProfile.tagInterests,
   });
   const savedAvatarUrlRef = useRef<string | null>(initialProfile.avatarUrl);
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
@@ -67,7 +70,6 @@ export function ProfileSettings({
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [avatarInputVersion, setAvatarInputVersion] = useState(0);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(initialProfile.avatarUrl);
-  const [verifiedIsAdmin, setVerifiedIsAdmin] = useState<boolean | null>(null);
   const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
@@ -78,18 +80,24 @@ export function ProfileSettings({
     }
   }, []);
 
+  useEffect(() => {
+    profileUpdatedAtRef.current = initialProfile.updatedAt;
+  }, [initialProfile.updatedAt]);
+
+  const profileFormSchema = useMemo(() => createProfileFormSchema(allTags), [allTags]);
+
   const profileForm = useForm<ProfileValues, undefined, NormalizedProfileValues>({
-    resolver: zodResolver(profileSchema),
+    resolver: zodResolver(profileFormSchema),
     mode: "onSubmit",
     reValidateMode: "onChange",
     defaultValues: {
       username: initialProfile.username,
       firstName: initialProfile.firstName,
       lastName: initialProfile.lastName,
-      role: initialProfile.role,
-      region: initialProfile.region,
-      city: initialProfile.city,
+      gender: initialProfile.gender,
       bio: initialProfile.bio,
+      tagSelections: initialProfile.tagSelections,
+      tagInterests: initialProfile.tagInterests,
     },
   });
 
@@ -130,16 +138,17 @@ export function ProfileSettings({
     const nextState = await updateProfileAction(previousState, formData);
 
     if (nextState.ok && nextState.profile) {
-      const nextProfileValues: NormalizedProfileValues = {
+      const nextProfileValues: ProfileValues = {
         username: nextState.profile.username,
         firstName: nextState.profile.firstName,
         lastName: nextState.profile.lastName,
-        role: nextState.profile.role,
-        region: nextState.profile.region,
-        city: nextState.profile.city,
+        gender: nextState.profile.gender,
         bio: nextState.profile.bio,
+        tagSelections: nextState.profile.tagSelections,
+        tagInterests: nextState.profile.tagInterests,
       };
 
+      profileUpdatedAtRef.current = nextState.profile.updatedAt;
       profileDefaultValuesRef.current = nextProfileValues;
       savedAvatarUrlRef.current = nextState.profile.avatarUrl;
       profileForm.reset(nextProfileValues);
@@ -175,87 +184,11 @@ export function ProfileSettings({
   );
   const [deleteState, deleteFormAction, deletePending] = useActionState(deleteAccountAction, undefined);
 
-  const applyVerifiedRole = useCallback(
-    (isAdminFromDb: boolean) => {
-      setVerifiedIsAdmin(isAdminFromDb);
-      if (isAdminFromDb !== isAdmin) {
-        router.refresh();
-      }
-      dispatchNavbarSync();
-    },
-    [isAdmin, router],
-  );
-
-  useEffect(() => {
-    setVerifiedIsAdmin(null);
-  }, [isAdmin]);
-
-  const currentIsAdmin = verifiedIsAdmin !== null ? verifiedIsAdmin : isAdmin;
-  const effectiveCanDeleteWithPassword = hasPassword && !currentIsAdmin;
-
   const redirectToHome = useCallback((reason?: "profile_not_found") => {
     dispatchNavbarSync();
     router.replace(reason ? `/?error=${reason}` : "/");
     router.refresh();
   }, [router]);
-
-  const ensureProfileAvailable = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      redirectToHome();
-      return false;
-    }
-
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("id, is_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (error || !profile) {
-      redirectToHome("profile_not_found");
-      return false;
-    }
-
-    applyVerifiedRole(profile.is_admin === true);
-
-    return true;
-  }, [applyVerifiedRole, redirectToHome]);
-
-  const ensureAccountDeletable = useCallback(async () => {
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (!user) {
-      redirectToHome();
-      return false;
-    }
-
-    const { data: profile, error } = await supabase
-      .from("profiles")
-      .select("id, is_admin")
-      .eq("id", user.id)
-      .maybeSingle();
-
-    if (error || !profile) {
-      redirectToHome("profile_not_found");
-      return false;
-    }
-
-    if (profile.is_admin) {
-      applyVerifiedRole(true);
-      return false;
-    }
-
-    applyVerifiedRole(false);
-    return true;
-  }, [applyVerifiedRole, redirectToHome]);
 
   useEffect(() => {
     return () => {
@@ -264,49 +197,6 @@ export function ProfileSettings({
       }
     };
   }, []);
-
-  useEffect(() => {
-    const supabase = createClient();
-
-    async function redirectIfProfileUnavailable() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        redirectToHome();
-        return;
-      }
-
-      const { data: profile, error } = await supabase
-        .from("profiles")
-        .select("id, is_admin")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      if (error || !profile) {
-        redirectToHome("profile_not_found");
-        return;
-      }
-
-      applyVerifiedRole(profile.is_admin === true);
-    }
-
-    void redirectIfProfileUnavailable();
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session?.user) {
-        redirectToHome();
-        return;
-      }
-
-      void redirectIfProfileUnavailable();
-    });
-
-    return () => subscription.unsubscribe();
-  }, [applyVerifiedRole, redirectToHome]);
 
   useEffect(() => {
     if (
@@ -326,15 +216,6 @@ export function ProfileSettings({
       );
     }
   }, [deleteState, passwordState, profileState, redirectToHome]);
-
-  useEffect(() => {
-    if (deleteState?.reason !== "adminAccount") {
-      return;
-    }
-    setVerifiedIsAdmin(true);
-    router.refresh();
-    dispatchNavbarSync();
-  }, [deleteState?.reason, router]);
 
   useEffect(() => {
     if (!passwordState?.ok) {
@@ -434,13 +315,13 @@ export function ProfileSettings({
 
   const onProfileSubmit = (data: NormalizedProfileValues) => {
     const fd = new FormData();
+    fd.set("expectedUpdatedAt", profileUpdatedAtRef.current);
     fd.set("username", data.username);
     fd.set("firstName", data.firstName);
     fd.set("lastName", data.lastName);
-    fd.set("role", data.role);
-    fd.set("region", data.region ?? "");
-    fd.set("city", data.city ?? "");
+    fd.set("gender", data.gender);
     fd.set("bio", data.bio ?? "");
+    fd.set("tagIds", JSON.stringify(flattenProfileTagIds(data)));
     fd.set("removeAvatar", String(removeAvatar));
 
     if (selectedAvatarFile) {
@@ -486,44 +367,28 @@ export function ProfileSettings({
     event.preventDefault();
     setProfileSuccessMessage(null);
     void profileForm.handleSubmit((data) => {
-      void ensureProfileAvailable().then((isAvailable) => {
-        if (isAvailable) {
-          onProfileSubmit(data);
-        }
-      });
+      onProfileSubmit(data);
     })(event);
   };
 
   const handlePasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void passwordForm.handleSubmit((data) => {
-      void ensureProfileAvailable().then((isAvailable) => {
-        if (isAvailable) {
-          onPasswordSubmit(data);
-        }
-      });
+      onPasswordSubmit(data);
     })(event);
   };
 
   const handleSetPasswordFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void setPasswordForm.handleSubmit((data) => {
-      void ensureProfileAvailable().then((isAvailable) => {
-        if (isAvailable) {
-          onSetPasswordSubmit(data);
-        }
-      });
+      onSetPasswordSubmit(data);
     })(event);
   };
 
   const handleDeleteFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     void deleteForm.handleSubmit((data) => {
-      void ensureAccountDeletable().then((isAvailable) => {
-        if (isAvailable) {
-          onDeleteSubmit(data);
-        }
-      });
+      onDeleteSubmit(data);
     })(event);
   };
 
@@ -532,6 +397,7 @@ export function ProfileSettings({
       <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
         <ProfileDetailsCard
           form={profileForm}
+          allTags={allTags}
           state={
             profileSuccessMessage
               ? { ok: true, message: profileSuccessMessage }
@@ -545,7 +411,7 @@ export function ProfileSettings({
           avatarInputVersion={avatarInputVersion}
           onAvatarChange={handleAvatarChange}
           onAvatarRemove={handleAvatarRemove}
-          isAdmin={currentIsAdmin}
+          isAdmin={isAdmin}
         />
 
         <div className="grid gap-6">
@@ -591,8 +457,8 @@ export function ProfileSettings({
             action={deleteFormAction}
             onSubmit={handleDeleteFormSubmit}
             onReset={resetDeleteForm}
-            canDeleteWithPassword={effectiveCanDeleteWithPassword}
-            isAdmin={currentIsAdmin}
+            canDeleteWithPassword={canDeleteWithPassword}
+            isAdmin={isAdmin}
           />
         </div>
       </div>

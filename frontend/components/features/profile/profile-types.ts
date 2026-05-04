@@ -1,19 +1,37 @@
-import type { ProfileRole } from "@/lib/profile/options";
+export type ProfileGender = "male" | "female";
+
+export type ProfileGenderForm = "" | ProfileGender;
+
+export type ProfileTagRow = {
+  id: number;
+  slug: string;
+  label_uk: string;
+  category: string;
+};
+
+export type ProfileTagSelectionsExclusive = {
+  habits: number | null;
+  routine: number | null;
+  social: number | null;
+  pets: number | null;
+};
 
 export type ProfileInitialData = {
   username: string;
   firstName: string;
   lastName: string;
-  role: ProfileRole;
-  region: string;
-  city: string;
+  gender: ProfileGenderForm;
   bio: string;
   avatarUrl: string | null;
+  tagSelections: ProfileTagSelectionsExclusive;
+  tagInterests: number[];
+  updatedAt: string;
 };
 
 export type ProfileSettingsProps = {
   initialEmail: string;
   initialProfile: ProfileInitialData;
+  allTags: ProfileTagRow[];
   canManageCredentials: boolean;
   canDeleteWithPassword: boolean;
   hasPassword: boolean;
