@@ -6,13 +6,17 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   type NormalizedProfileValues,
+  buildInitialTagFormState,
+  createProfileFormSchema,
+  flattenProfileTagIds,
+  isTagPayloadConsistentWithIds,
   profileDeleteSchema,
   profilePasswordSchema,
   profileSetPasswordSchema,
-  profileSchema,
 } from "@/app/schemas/profile";
 import { isUsernameTaken } from "@/lib/auth/queries";
 import { userHasPassword } from "@/lib/auth/user";
+import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -23,8 +27,13 @@ export type ProfileMessage = {
   reason?: "unauthenticated" | "missingProfile" | "adminAccount";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
+    selectedTagIds: number[];
+    updatedAt: string;
   };
 };
+
+const PROFILE_STALE_VERSION_MESSAGE =
+  "Дані застаріли. Будь ласка, оновіть сторінку, щоб побачити актуальні зміни.";
 
 function mapUpdatePasswordError(raw: string) {
   const lower = raw.toLowerCase();
@@ -44,6 +53,19 @@ function createStatelessAuthClient() {
   });
 }
 
+function parseProfileTagIdsFromForm(formData: FormData): number[] | null {
+  const raw = formData.get("tagIds");
+  try {
+    const parsed = JSON.parse(String(raw ?? "[]")) as unknown;
+    if (!Array.isArray(parsed) || !parsed.every((x) => Number.isInteger(x))) {
+      return null;
+    }
+    return [...new Set(parsed as number[])];
+  } catch {
+    return null;
+  }
+}
+
 export async function updateProfileAction(
   _prevState: ProfileMessage | undefined,
   formData: FormData,
@@ -57,9 +79,14 @@ export async function updateProfileAction(
     return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
   }
 
+  const expectedUpdatedAt = String(formData.get("expectedUpdatedAt") ?? "").trim();
+  if (!expectedUpdatedAt) {
+    return { ok: false, message: "Некоректні дані версії профілю. Оновіть сторінку." };
+  }
+
   const { data: currentProfile, error: profileError } = await supabase
     .from("profiles")
-    .select("username, avatar_path")
+    .select("username, avatar_path, updated_at")
     .eq("id", user.id)
     .maybeSingle();
 
@@ -67,14 +94,39 @@ export async function updateProfileAction(
     return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
   }
 
+  if (currentProfile.updated_at !== expectedUpdatedAt) {
+    return { ok: false, message: PROFILE_STALE_VERSION_MESSAGE };
+  }
+
+  const { data: tagRowsRaw, error: tagsLoadError } = await supabase
+    .from("tags")
+    .select(TAGS_WITH_CATEGORY_SELECT);
+
+  const allTagRows = mapTagsQueryToProfileRows(tagRowsRaw);
+
+  if (tagsLoadError || !allTagRows.length) {
+    return { ok: false, message: "Не вдалося завантажити теги." };
+  }
+
+  const uniqueIds = parseProfileTagIdsFromForm(formData);
+  if (!uniqueIds) {
+    return { ok: false, message: "Некоректні дані тегів." };
+  }
+
+  const expanded = buildInitialTagFormState(allTagRows, uniqueIds);
+  if (!isTagPayloadConsistentWithIds(allTagRows, uniqueIds, expanded)) {
+    return { ok: false, message: "Некоректний набір тегів." };
+  }
+
+  const profileSchema = createProfileFormSchema(allTagRows);
   const parsed = profileSchema.safeParse({
     firstName: String(formData.get("firstName") ?? ""),
     lastName: String(formData.get("lastName") ?? ""),
     username: String(formData.get("username") ?? ""),
-    role: String(formData.get("role") ?? ""),
-    region: String(formData.get("region") ?? ""),
-    city: String(formData.get("city") ?? ""),
+    gender: String(formData.get("gender") ?? ""),
     bio: String(formData.get("bio") ?? ""),
+    tagSelections: expanded.tagSelections,
+    tagInterests: expanded.tagInterests,
   });
 
   if (!parsed.success) {
@@ -124,22 +176,48 @@ export async function updateProfileAction(
     nextAvatarPath = nextPath;
   }
 
-  const { error } = await supabase
+  const { data: updatedProfileRows, error: profileUpdateError } = await supabase
     .from("profiles")
     .update({
       username: parsed.data.username.trim(),
       first_name: parsed.data.firstName.trim(),
       last_name: parsed.data.lastName.trim(),
-      role: parsed.data.role,
-      region: parsed.data.region || null,
-      city: parsed.data.city || null,
       bio: parsed.data.bio,
+      gender: parsed.data.gender,
       avatar_path: nextAvatarPath,
     })
-    .eq("id", user.id);
+    .eq("id", user.id)
+    .eq("updated_at", expectedUpdatedAt)
+    .select("updated_at");
 
-  if (error) {
+  if (profileUpdateError) {
     return { ok: false, message: "Не вдалося зберегти профіль." };
+  }
+  if (!updatedProfileRows?.length) {
+    return { ok: false, message: PROFILE_STALE_VERSION_MESSAGE };
+  }
+
+  const nextUpdatedAt = updatedProfileRows[0].updated_at;
+
+  const nextTagIds = flattenProfileTagIds(parsed.data);
+
+  const { error: deleteTagsError } = await supabase.from("profile_tags").delete().eq("profile_id", user.id);
+
+  if (deleteTagsError) {
+    return { ok: false, message: "Не вдалося оновити теги профілю." };
+  }
+
+  if (nextTagIds.length > 0) {
+    const { error: insertTagsError } = await supabase.from("profile_tags").insert(
+      nextTagIds.map((tag_id) => ({
+        profile_id: user.id,
+        tag_id,
+      })),
+    );
+
+    if (insertTagsError) {
+      return { ok: false, message: "Не вдалося зберегти теги профілю." };
+    }
   }
 
   revalidatePath("/profile");
@@ -156,11 +234,13 @@ export async function updateProfileAction(
       username: parsed.data.username.trim(),
       firstName: parsed.data.firstName.trim(),
       lastName: parsed.data.lastName.trim(),
-      role: parsed.data.role,
-      region: parsed.data.region,
-      city: parsed.data.city,
+      gender: parsed.data.gender,
       bio: parsed.data.bio,
+      tagSelections: parsed.data.tagSelections,
+      tagInterests: parsed.data.tagInterests,
       avatarUrl,
+      selectedTagIds: nextTagIds,
+      updatedAt: nextUpdatedAt,
     },
   };
 }
@@ -284,7 +364,7 @@ export async function deleteAccountAction(
   if (currentProfile.is_admin) {
     return {
       ok: false,
-      message: "Адміністраторський акаунт не можна видалити зі сторінки профілю.",
+      message: PROFILE_STALE_VERSION_MESSAGE,
       reason: "adminAccount",
     };
   }
