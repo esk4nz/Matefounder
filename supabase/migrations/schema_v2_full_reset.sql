@@ -55,23 +55,16 @@ create table public.profiles (
   avatar_path text,
   bio text,
   gender text,
-  city_id uuid references public.cities (id) on delete set null,
   embedding vector(768),
   is_blocked boolean not null default false,
   is_admin boolean not null default false,
   updated_at timestamptz not null default now(),
   constraint profiles_username_len check (char_length(username) between 3 and 40),
-  constraint profiles_gender_chk check (
-    gender is null or gender in ('male', 'female')
-  ),
+  constraint profiles_gender_chk check (gender in ('male', 'female')),
   constraint profiles_no_admin_while_blocked check (not (is_admin and is_blocked))
 );
 
 create unique index profiles_username_lower_idx on public.profiles (lower(username));
-
-create index if not exists profiles_city_idx
-  on public.profiles (city_id)
-  where city_id is not null and not is_blocked;
 
 create index if not exists profiles_embedding_hnsw_idx
   on public.profiles
@@ -81,7 +74,9 @@ create index if not exists profiles_embedding_hnsw_idx
 create table public.tags (
   id integer generated always as identity primary key,
   slug text not null unique,
-  label_uk text not null
+  label_uk text not null,
+  category text not null default 'interests'
+  check (category in ('habits', 'routine', 'social', 'pets', 'interests'))
 );
 
 create table public.profile_tags (
@@ -456,7 +451,6 @@ grant update (
   avatar_path,
   bio,
   gender,
-  city_id,
   embedding
 ) on public.profiles to authenticated;
 
@@ -479,6 +473,17 @@ create policy "tags_select_authenticated"
   on public.tags for select
   to authenticated
   using (true);
+
+drop policy if exists "tags_write_admin" on public.tags;
+create policy "tags_write_admin"
+  on public.tags for all
+  to authenticated
+  using (
+    exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+  )
+  with check (
+    exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+  );
 
 drop policy if exists "profile_tags_select_public_profiles" on public.profile_tags;
 create policy "profile_tags_select_public_profiles"
@@ -911,19 +916,6 @@ create policy "listing_images_delete_creator"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- seed tags
-insert into public.tags (slug, label_uk) values
-  ('quiet', 'Спокій у домі'),
-  ('no_smoking', 'Без куріння'),
-  ('pets_ok', 'Можна з тваринами'),
-  ('no_pets', 'Без тварин'),
-  ('clean', 'Акуратність / прибирання'),
-  ('early_bird', 'Ранній підйом'),
-  ('night_owl', 'Пізні години'),
-  ('guests_ok', 'Гості за домовленістю'),
-  ('study_focus', 'Фокус на навчанні / роботі')
-on conflict (slug) do nothing;
-
 -- seed regions, cities (UA)
 do $$
 declare
@@ -1029,3 +1021,29 @@ begin
   insert into public.cities (region_id, name) values (r_id, 'Київ');
 
 end $$;
+
+INSERT INTO public.tags (category, slug, label_uk) VALUES
+  ('habits', 'smoke_yes', '🚬 Палю'),
+  ('habits', 'smoke_no', '🚭 Не палю'),
+
+  ('routine', 'sleep_early', '☀️ Жайворонок (ранній підйом)'),
+  ('routine', 'sleep_late', '🦉 Сова (пізній відбій)'),
+  ('routine', 'sleep_flexible', '🔄 Гнучкий графік'),
+
+  ('social', 'guests_party', '🎉 Обожнюю вечірки та гостей'),
+  ('social', 'guests_rare', '☕ Гості іноді — це норма'),
+  ('social', 'guests_none', '🛑 Люблю тишу (без гостей)'),
+
+  ('pets', 'pets_ok', '🐾 Готовий до тварин у домі'),
+  ('pets', 'pets_no', '🚫 Не готовий до тварин / Алергія'),
+  ('pets', 'has_pet', '🐕 Маю улюбленця'),
+
+  ('interests', 'int_it', '💻 Технології / IT'),
+  ('interests', 'int_sport', '🏃‍♀️ Спорт / Фітнес'),
+  ('interests', 'int_music', '🎵 Музика'),
+  ('interests', 'int_movies', '🎬 Кіно / Серіали'),
+  ('interests', 'int_games', '🎮 Відеоігри'),
+  ('interests', 'int_cooking', '🍳 Кулінарія'),
+  ('interests', 'int_art', '🎨 Мистецтво / Дизайн'),
+  ('interests', 'int_travel', '✈️ Подорожі'),
+  ('interests', 'int_books', '📚 Читання');

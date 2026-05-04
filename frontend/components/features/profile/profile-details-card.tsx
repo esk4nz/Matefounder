@@ -5,6 +5,8 @@ import { PencilLine, Upload, UserRound } from "lucide-react";
 import type { ProfileMessage } from "@/app/actions/profile";
 import type { NormalizedProfileValues, ProfileValues } from "@/app/schemas/profile";
 import { ActionMessage, FieldError } from "@/components/features/profile/profile-form-feedback";
+import { ProfileTagsChips } from "@/components/features/profile/profile-tags-chips";
+import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -15,17 +17,12 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  PROFILE_ROLE_OPTIONS,
-  REGION_OPTIONS,
-  getCitiesForRegion,
-  isValidCityForRegion,
-} from "@/lib/profile/options";
+import { cn } from "@/lib/utils";
 
 type Props = {
   form: UseFormReturn<ProfileValues, undefined, NormalizedProfileValues>;
+  allTags: ProfileTagRow[];
   state: ProfileMessage | undefined;
   pending: boolean;
   action: (payload: FormData) => void;
@@ -40,6 +37,7 @@ type Props = {
 
 export function ProfileDetailsCard({
   form,
+  allTags,
   state,
   pending,
   action,
@@ -58,11 +56,6 @@ export function ProfileDetailsCard({
     control: form.control,
     name: "bio",
   });
-  const regionValue = useWatch({
-    control: form.control,
-    name: "region",
-  });
-  const cityOptions = getCitiesForRegion(regionValue ?? "");
 
   return (
     <Card className="border-none bg-white shadow-[0_18px_50px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/80">
@@ -71,10 +64,6 @@ export function ProfileDetailsCard({
           <PencilLine className="size-5 text-blue-600" />
           Основна інформація
         </CardTitle>
-        <CardDescription>
-          Ім&apos;я, логін, фото, роль у пошуку та короткий опис себе. Це бачать інші
-          користувачі.
-        </CardDescription>
         {isAdmin ? (
           <div className="rounded-2xl border border-blue-200 bg-blue-50/90 px-4 py-3 text-blue-900">
             <p className="text-xs font-black uppercase tracking-[0.18em] text-blue-700">
@@ -206,109 +195,71 @@ export function ProfileDetailsCard({
             <FieldError message={errors.username?.message} />
           </div>
 
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="grid gap-1 md:col-span-1">
-              <Label
-                htmlFor="role"
-                className={errors.role ? "text-red-500" : "text-slate-700"}
-              >
-                Моя роль у пошуку
-              </Label>
-              <Controller
-                control={form.control}
-                name="role"
-                render={({ field }) => (
-                  <Select
-                    {...field}
-                    value={field.value ?? ""}
-                    id="role"
-                    className={errors.role ? "border-red-500 focus-visible:ring-red-500" : ""}
+          <div className="grid gap-2">
+            <Label
+              id="gender-label"
+              className={errors.gender ? "text-red-500" : "text-slate-700"}
+            >
+              Стать
+            </Label>
+            <Controller
+              control={form.control}
+              name="gender"
+              render={({ field }) => (
+                <div
+                  role="radiogroup"
+                  aria-labelledby="gender-label"
+                  className="grid max-w-md grid-cols-2 gap-3"
+                >
+                  <label
+                    className={cn(
+                      "flex cursor-pointer items-center justify-center rounded-2xl border-2 px-4 py-3.5 text-center text-sm font-bold transition-colors",
+                      field.value === "female"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 shadow-sm"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                      errors.gender ? "border-red-400" : "",
+                    )}
                   >
-                    {PROFILE_ROLE_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              />
-              <FieldError message={errors.role?.message} />
-            </div>
-
-            <div className="grid gap-1">
-              <Label
-                htmlFor="region"
-                className={errors.region ? "text-red-500" : "text-slate-700"}
-              >
-                Область
-              </Label>
-              <Controller
-                control={form.control}
-                name="region"
-                render={({ field }) => (
-                  <Select
-                    {...field}
-                    value={field.value ?? ""}
-                    id="region"
-                    className={errors.region ? "border-red-500 focus-visible:ring-red-500" : ""}
-                    onChange={(event) => {
-                      field.onChange(event);
-                      const nextRegion = event.target.value;
-                      const currentCity = form.getValues("city");
-                      if (!currentCity || isValidCityForRegion(nextRegion, currentCity)) {
-                        return;
-                      }
-
-                      form.setValue("city", "", {
-                        shouldDirty: true,
-                        shouldValidate: true,
-                      });
-                    }}
+                    <input
+                      type="radio"
+                      name="profile-gender"
+                      value="female"
+                      className="sr-only"
+                      checked={field.value === "female"}
+                      onChange={() => {
+                        field.onChange("female");
+                      }}
+                    />
+                    Жінка
+                  </label>
+                  <label
+                    className={cn(
+                      "flex cursor-pointer items-center justify-center rounded-2xl border-2 px-4 py-3.5 text-center text-sm font-bold transition-colors",
+                      field.value === "male"
+                        ? "border-blue-600 bg-blue-50 text-blue-900 shadow-sm"
+                        : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                      errors.gender ? "border-red-400" : "",
+                    )}
                   >
-                    <option value="">Не обрано</option>
-                    {REGION_OPTIONS.map((region) => (
-                      <option key={region} value={region}>
-                        {region}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              />
-              <FieldError message={errors.region?.message} />
-            </div>
-
-            <div className="grid gap-1">
-              <Label
-                htmlFor="city"
-                className={errors.city ? "text-red-500" : "text-slate-700"}
-              >
-                Місто
-              </Label>
-              <Controller
-                control={form.control}
-                name="city"
-                render={({ field }) => (
-                  <Select
-                    {...field}
-                    value={field.value ?? ""}
-                    id="city"
-                    disabled={!regionValue}
-                    className={errors.city ? "border-red-500 focus-visible:ring-red-500" : ""}
-                  >
-                    <option value="">
-                      {regionValue ? "Оберіть місто" : "Спочатку оберіть область"}
-                    </option>
-                    {cityOptions.map((city) => (
-                      <option key={city} value={city}>
-                        {city}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              />
-              <FieldError message={errors.city?.message} />
-            </div>
+                    <input
+                      type="radio"
+                      name="profile-gender"
+                      value="male"
+                      className="sr-only"
+                      checked={field.value === "male"}
+                      onChange={() => {
+                        field.onChange("male");
+                      }}
+                    />
+                    Чоловік
+                  </label>
+                </div>
+              )}
+            />
+            <FieldError message={errors.gender?.message} />
           </div>
+
+          <ProfileTagsChips form={form} allTags={allTags} />
 
           <div className="grid gap-1">
             <Label
