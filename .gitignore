@@ -1,4 +1,4 @@
-# --- Залежності (Frontend & Backend) ---
+# Dependencies
 frontend/node_modules/
 jspm_packages/
 venv/
@@ -13,7 +13,7 @@ __pycache__/
 !.yarn/releases
 !.yarn/versions
 
-# --- Білди та кеш ---
+# Builds and cache
 .next/
 out/
 build/
@@ -21,21 +21,21 @@ dist/
 *.tsbuildinfo
 next-env.d.ts
 
-# --- IDE та Редактори (WebStorm, VSCode) ---
+# IDEs and editors
 .idea/
 .vscode/
 *.swp
 *.swo
 .DS_Store
 
-# --- Секретні файли (НЕ КОМІТИТИ!) ---
+# Secrets (DO NOT COMMIT!)
 .env
 .env*
 !.env.example
 *.pem
 .vercel
 
-# --- Логи та дебаг ---
+# logs and debug
 *.log
 npm-debug.log*
 yarn-debug.log*
