@@ -3,6 +3,7 @@ import { ProfileSettings } from "@/components/features/profile/profile-settings"
 import type { ProfileGenderForm, ProfileTagRow } from "@/components/features/profile/profile-types";
 import { buildInitialTagFormState } from "@/app/schemas/profile";
 import { userHasPassword } from "@/lib/auth/user";
+import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function ProfilePage() {
@@ -21,7 +22,11 @@ export default async function ProfilePage() {
       .select("username, first_name, last_name, bio, avatar_path, is_admin, gender, updated_at")
       .eq("id", user.id)
       .maybeSingle(),
-    supabase.from("tags").select("id, slug, label_uk, category").order("category").order("slug"),
+    supabase
+      .from("tags")
+      .select(TAGS_WITH_CATEGORY_SELECT)
+      .order("category_id", { ascending: true })
+      .order("slug", { ascending: true }),
     supabase.from("profile_tags").select("tag_id").eq("profile_id", user.id),
   ]);
 
@@ -33,12 +38,7 @@ export default async function ProfilePage() {
     redirect("/?error=profile_not_found");
   }
 
-  const allTags: ProfileTagRow[] = tagsRaw.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    label_uk: row.label_uk,
-    category: row.category,
-  }));
+  const allTags: ProfileTagRow[] = mapTagsQueryToProfileRows(tagsRaw);
 
   const selectedTagIds = profileTagsRaw.map((row) => row.tag_id);
   const { tagSelections, tagInterests } = buildInitialTagFormState(allTags, selectedTagIds);

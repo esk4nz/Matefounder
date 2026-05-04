@@ -20,6 +20,7 @@ drop table if exists public.listings cascade;
 drop table if exists public.profile_tags cascade;
 drop table if exists public.user_blocks cascade;
 drop table if exists public.tags cascade;
+drop table if exists public.tag_categories cascade;
 drop table if exists public.profiles cascade;
 drop table if exists public.cities cascade;
 drop table if exists public.regions cascade;
@@ -71,12 +72,18 @@ create index if not exists profiles_embedding_hnsw_idx
   using hnsw (embedding vector_cosine_ops)
   where embedding is not null;
 
+create table public.tag_categories (
+  id integer generated always as identity primary key,
+  name text not null unique,
+  updated_at timestamptz not null default now()
+);
+
 create table public.tags (
   id integer generated always as identity primary key,
+  category_id integer not null references public.tag_categories (id) on delete restrict,
   slug text not null unique,
   label_uk text not null,
-  category text not null default 'interests'
-  check (category in ('habits', 'routine', 'social', 'pets', 'interests'))
+  updated_at timestamptz not null default now()
 );
 
 create table public.profile_tags (
@@ -86,6 +93,7 @@ create table public.profile_tags (
 );
 
 create index if not exists profile_tags_tag_id_idx on public.profile_tags (tag_id);
+create index if not exists tags_category_id_idx on public.tags (category_id);
 
 -- listings, listing_images
 create table public.listings (
@@ -246,6 +254,14 @@ create trigger profiles_set_updated_at
   before update on public.profiles
   for each row execute procedure public.set_updated_at();
 
+create trigger tag_categories_set_updated_at
+  before update on public.tag_categories
+  for each row execute procedure public.set_updated_at();
+
+create trigger tags_set_updated_at
+  before update on public.tags
+  for each row execute procedure public.set_updated_at();
+
 create trigger listings_set_updated_at
   before update on public.listings
   for each row execute procedure public.set_updated_at();
@@ -389,6 +405,7 @@ create trigger on_chat_message_insert
 alter table public.regions enable row level security;
 alter table public.cities enable row level security;
 alter table public.profiles enable row level security;
+alter table public.tag_categories enable row level security;
 alter table public.tags enable row level security;
 alter table public.profile_tags enable row level security;
 alter table public.listings enable row level security;
@@ -467,7 +484,24 @@ create policy "profiles_insert_own"
   to authenticated
   with check (id = auth.uid());
 
--- RLS tags, profile_tags
+-- RLS tag_categories, tags, profile_tags
+drop policy if exists "tag_categories_select_authenticated" on public.tag_categories;
+create policy "tag_categories_select_authenticated"
+  on public.tag_categories for select
+  to authenticated
+  using (true);
+
+drop policy if exists "tag_categories_write_admin" on public.tag_categories;
+create policy "tag_categories_write_admin"
+  on public.tag_categories for all
+  to authenticated
+  using (
+    exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+  )
+  with check (
+    exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+  );
+
 drop policy if exists "tags_select_authenticated" on public.tags;
 create policy "tags_select_authenticated"
   on public.tags for select
@@ -917,133 +951,338 @@ create policy "listing_images_delete_creator"
   );
 
 -- seed regions, cities (UA)
-do $$
-declare
-  r_id uuid;
-begin
-  insert into public.regions (name) values ('Вінницька область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Вінниця'), (r_id, 'Жмеринка'), (r_id, 'Могилів-Подільський'), (r_id, 'Хмільник');
+insert into public.regions (name) values
+  ('Вінницька область'),
+  ('Волинська область'),
+  ('Дніпропетровська область'),
+  ('Донецька область'),
+  ('Житомирська область'),
+  ('Закарпатська область'),
+  ('Запорізька область'),
+  ('Івано-Франківська область'),
+  ('Київська область'),
+  ('Кіровоградська область'),
+  ('Луганська область'),
+  ('Львівська область'),
+  ('Миколаївська область'),
+  ('Одеська область'),
+  ('Полтавська область'),
+  ('Рівненська область'),
+  ('Сумська область'),
+  ('Тернопільська область'),
+  ('Харківська область'),
+  ('Херсонська область'),
+  ('Хмельницька область'),
+  ('Черкаська область'),
+  ('Чернівецька область'),
+  ('Чернігівська область'),
+  ('м. Київ');
 
-  insert into public.regions (name) values ('Волинська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Луцьк'), (r_id, 'Ковель'), (r_id, 'Володимир'), (r_id, 'Нововолинськ');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Вінниця'),
+  ('Жмеринка'),
+  ('Могилів-Подільський'),
+  ('Хмільник')
+) as v(name)
+where r.name = 'Вінницька область';
 
-  insert into public.regions (name) values ('Дніпропетровська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Дніпро'), (r_id, 'Кривий Ріг'), (r_id, 'Кам''янське'), (r_id, 'Нікополь');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Луцьк'),
+  ('Ковель'),
+  ('Володимир'),
+  ('Нововолинськ')
+) as v(name)
+where r.name = 'Волинська область';
 
-  insert into public.regions (name) values ('Донецька область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Краматорськ'), (r_id, 'Слов''янськ'), (r_id, 'Покровськ'), (r_id, 'Бахмут');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Дніпро'),
+  ('Кривий Ріг'),
+  ('Кам''янське'),
+  ('Нікополь')
+) as v(name)
+where r.name = 'Дніпропетровська область';
 
-  insert into public.regions (name) values ('Житомирська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Житомир'), (r_id, 'Бердичів'), (r_id, 'Коростень'), (r_id, 'Звягель');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Краматорськ'),
+  ('Слов''янськ'),
+  ('Покровськ'),
+  ('Бахмут')
+) as v(name)
+where r.name = 'Донецька область';
 
-  insert into public.regions (name) values ('Закарпатська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Ужгород'), (r_id, 'Мукачево'), (r_id, 'Хуст'), (r_id, 'Берегове');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Житомир'),
+  ('Бердичів'),
+  ('Коростень'),
+  ('Звягель')
+) as v(name)
+where r.name = 'Житомирська область';
 
-  insert into public.regions (name) values ('Запорізька область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Запоріжжя'), (r_id, 'Мелітополь'), (r_id, 'Бердянськ'), (r_id, 'Енергодар');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Ужгород'),
+  ('Мукачево'),
+  ('Хуст'),
+  ('Берегове')
+) as v(name)
+where r.name = 'Закарпатська область';
 
-  insert into public.regions (name) values ('Івано-Франківська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Івано-Франківськ'), (r_id, 'Калуш'), (r_id, 'Коломия'), (r_id, 'Яремче');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Запоріжжя'),
+  ('Мелітополь'),
+  ('Бердянськ'),
+  ('Енергодар')
+) as v(name)
+where r.name = 'Запорізька область';
 
-  insert into public.regions (name) values ('Київська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Біла Церква'), (r_id, 'Бровари'), (r_id, 'Бориспіль'), (r_id, 'Ірпінь'), (r_id, 'Буча'), (r_id, 'Вишневе');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Івано-Франківськ'),
+  ('Калуш'),
+  ('Коломия'),
+  ('Яремче')
+) as v(name)
+where r.name = 'Івано-Франківська область';
 
-  insert into public.regions (name) values ('Кіровоградська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Кропивницький'), (r_id, 'Олександрія'), (r_id, 'Світловодськ'), (r_id, 'Знам''янка');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Біла Церква'),
+  ('Бровари'),
+  ('Бориспіль'),
+  ('Ірпінь'),
+  ('Буча'),
+  ('Вишневе')
+) as v(name)
+where r.name = 'Київська область';
 
-  insert into public.regions (name) values ('Луганська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Сєвєродонецьк'), (r_id, 'Лисичанськ'), (r_id, 'Старобільськ'), (r_id, 'Рубіжне');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Кропивницький'),
+  ('Олександрія'),
+  ('Світловодськ'),
+  ('Знам''янка')
+) as v(name)
+where r.name = 'Кіровоградська область';
 
-  insert into public.regions (name) values ('Львівська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Львів'), (r_id, 'Дрогобич'), (r_id, 'Стрий'), (r_id, 'Червоноград'), (r_id, 'Трускавець');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Сєвєродонецьк'),
+  ('Лисичанськ'),
+  ('Старобільськ'),
+  ('Рубіжне')
+) as v(name)
+where r.name = 'Луганська область';
 
-  insert into public.regions (name) values ('Миколаївська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Миколаїв'), (r_id, 'Первомайськ'), (r_id, 'Вознесенськ'), (r_id, 'Южноукраїнськ');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Львів'),
+  ('Дрогобич'),
+  ('Стрий'),
+  ('Червоноград'),
+  ('Трускавець')
+) as v(name)
+where r.name = 'Львівська область';
 
-  insert into public.regions (name) values ('Одеська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Одеса'), (r_id, 'Чорноморськ'), (r_id, 'Ізмаїл'), (r_id, 'Подільськ'), (r_id, 'Білгород-Дністровський');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Миколаїв'),
+  ('Первомайськ'),
+  ('Вознесенськ'),
+  ('Южноукраїнськ')
+) as v(name)
+where r.name = 'Миколаївська область';
 
-  insert into public.regions (name) values ('Полтавська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Полтава'), (r_id, 'Кременчук'), (r_id, 'Миргород'), (r_id, 'Лубни');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Одеса'),
+  ('Чорноморськ'),
+  ('Ізмаїл'),
+  ('Подільськ'),
+  ('Білгород-Дністровський')
+) as v(name)
+where r.name = 'Одеська область';
 
-  insert into public.regions (name) values ('Рівненська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Рівне'), (r_id, 'Дубно'), (r_id, 'Вараш'), (r_id, 'Сарни');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Полтава'),
+  ('Кременчук'),
+  ('Миргород'),
+  ('Лубни')
+) as v(name)
+where r.name = 'Полтавська область';
 
-  insert into public.regions (name) values ('Сумська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Суми'), (r_id, 'Конотоп'), (r_id, 'Шостка'), (r_id, 'Охтирка');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Рівне'),
+  ('Дубно'),
+  ('Вараш'),
+  ('Сарни')
+) as v(name)
+where r.name = 'Рівненська область';
 
-  insert into public.regions (name) values ('Тернопільська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Тернопіль'), (r_id, 'Чортків'), (r_id, 'Кременець'), (r_id, 'Бережани');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Суми'),
+  ('Конотоп'),
+  ('Шостка'),
+  ('Охтирка')
+) as v(name)
+where r.name = 'Сумська область';
 
-  insert into public.regions (name) values ('Харківська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Харків'), (r_id, 'Лозова'), (r_id, 'Ізюм'), (r_id, 'Чугуїв');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Тернопіль'),
+  ('Чортків'),
+  ('Кременець'),
+  ('Бережани')
+) as v(name)
+where r.name = 'Тернопільська область';
 
-  insert into public.regions (name) values ('Херсонська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Херсон'), (r_id, 'Нова Каховка'), (r_id, 'Каховка'), (r_id, 'Генічеськ');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Харків'),
+  ('Лозова'),
+  ('Ізюм'),
+  ('Чугуїв')
+) as v(name)
+where r.name = 'Харківська область';
 
-  insert into public.regions (name) values ('Хмельницька область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Хмельницький'), (r_id, 'Кам''янець-Подільський'), (r_id, 'Шепетівка'), (r_id, 'Славута');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Херсон'),
+  ('Нова Каховка'),
+  ('Каховка'),
+  ('Генічеськ')
+) as v(name)
+where r.name = 'Херсонська область';
 
-  insert into public.regions (name) values ('Черкаська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Черкаси'), (r_id, 'Умань'), (r_id, 'Сміла'), (r_id, 'Золотоноша');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Хмельницький'),
+  ('Кам''янець-Подільський'),
+  ('Шепетівка'),
+  ('Славута')
+) as v(name)
+where r.name = 'Хмельницька область';
 
-  insert into public.regions (name) values ('Чернівецька область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Чернівці'), (r_id, 'Хотин'), (r_id, 'Новодністровськ'), (r_id, 'Сторожинець');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Черкаси'),
+  ('Умань'),
+  ('Сміла'),
+  ('Золотоноша')
+) as v(name)
+where r.name = 'Черкаська область';
 
-  insert into public.regions (name) values ('Чернігівська область') returning id into r_id;
-  insert into public.cities (region_id, name) values 
-    (r_id, 'Чернігів'), (r_id, 'Ніжин'), (r_id, 'Прилуки'), (r_id, 'Новгород-Сіверський');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Чернівці'),
+  ('Хотин'),
+  ('Новодністровськ'),
+  ('Сторожинець')
+) as v(name)
+where r.name = 'Чернівецька область';
 
-  insert into public.regions (name) values ('м. Київ') returning id into r_id;
-  insert into public.cities (region_id, name) values (r_id, 'Київ');
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Чернігів'),
+  ('Ніжин'),
+  ('Прилуки'),
+  ('Новгород-Сіверський')
+) as v(name)
+where r.name = 'Чернігівська область';
 
-end $$;
+insert into public.cities (region_id, name)
+select r.id, v.name
+from public.regions r
+cross join (values
+  ('Київ')
+) as v(name)
+where r.name = 'м. Київ';
 
-INSERT INTO public.tags (category, slug, label_uk) VALUES
-  ('habits', 'smoke_yes', '🚬 Палю'),
-  ('habits', 'smoke_no', '🚭 Не палю'),
+insert into public.tag_categories (name) values
+  ('Звички'),
+  ('Режим'),
+  ('Соціальність'),
+  ('Тварини'),
+  ('Інтереси');
 
-  ('routine', 'sleep_early', '☀️ Жайворонок (ранній підйом)'),
-  ('routine', 'sleep_late', '🦉 Сова (пізній відбій)'),
-  ('routine', 'sleep_flexible', '🔄 Гнучкий графік'),
+insert into public.tags (category_id, slug, label_uk) values
+  ((select id from public.tag_categories where name = 'Звички'), 'smoke_yes', '🚬 Палю'),
+  ((select id from public.tag_categories where name = 'Звички'), 'smoke_no', '🚭 Не палю'),
 
-  ('social', 'guests_party', '🎉 Обожнюю вечірки та гостей'),
-  ('social', 'guests_rare', '☕ Гості іноді — це норма'),
-  ('social', 'guests_none', '🛑 Люблю тишу (без гостей)'),
+  ((select id from public.tag_categories where name = 'Режим'), 'sleep_early', '☀️ Жайворонок (ранній підйом)'),
+  ((select id from public.tag_categories where name = 'Режим'), 'sleep_late', '🦉 Сова (пізній відбій)'),
+  ((select id from public.tag_categories where name = 'Режим'), 'sleep_flexible', '🔄 Гнучкий графік'),
 
-  ('pets', 'pets_ok', '🐾 Готовий до тварин у домі'),
-  ('pets', 'pets_no', '🚫 Не готовий до тварин / Алергія'),
-  ('pets', 'has_pet', '🐕 Маю улюбленця'),
+  ((select id from public.tag_categories where name = 'Соціальність'), 'guests_party', '🎉 Обожнюю вечірки та гостей'),
+  ((select id from public.tag_categories where name = 'Соціальність'), 'guests_rare', '☕ Гості іноді — це норма'),
+  ((select id from public.tag_categories where name = 'Соціальність'), 'guests_none', '🛑 Люблю тишу (без гостей)'),
 
-  ('interests', 'int_it', '💻 Технології / IT'),
-  ('interests', 'int_sport', '🏃‍♀️ Спорт / Фітнес'),
-  ('interests', 'int_music', '🎵 Музика'),
-  ('interests', 'int_movies', '🎬 Кіно / Серіали'),
-  ('interests', 'int_games', '🎮 Відеоігри'),
-  ('interests', 'int_cooking', '🍳 Кулінарія'),
-  ('interests', 'int_art', '🎨 Мистецтво / Дизайн'),
-  ('interests', 'int_travel', '✈️ Подорожі'),
-  ('interests', 'int_books', '📚 Читання');
+  ((select id from public.tag_categories where name = 'Тварини'), 'pets_ok', '🐾 Готовий до тварин у домі'),
+  ((select id from public.tag_categories where name = 'Тварини'), 'pets_no', '🚫 Не готовий до тварин / Алергія'),
+  ((select id from public.tag_categories where name = 'Тварини'), 'has_pet', '🐕 Маю улюбленця'),
+
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_it', '💻 Технології / IT'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_sport', '🏃‍♀️ Спорт / Фітнес'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_music', '🎵 Музика'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_movies', '🎬 Кіно / Серіали'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_games', '🎮 Відеоігри'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_cooking', '🍳 Кулінарія'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_art', '🎨 Мистецтво / Дизайн'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_travel', '✈️ Подорожі'),
+  ((select id from public.tag_categories where name = 'Інтереси'), 'int_books', '📚 Читання');

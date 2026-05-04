@@ -16,6 +16,7 @@ import {
 } from "@/app/schemas/profile";
 import { isUsernameTaken } from "@/lib/auth/queries";
 import { userHasPassword } from "@/lib/auth/user";
+import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { getSupabaseAnonKey, getSupabaseUrl } from "@/lib/supabase/config";
 import { createClient } from "@/lib/supabase/server";
@@ -97,11 +98,13 @@ export async function updateProfileAction(
     return { ok: false, message: PROFILE_STALE_VERSION_MESSAGE };
   }
 
-  const { data: allTagRows, error: tagsLoadError } = await supabase
+  const { data: tagRowsRaw, error: tagsLoadError } = await supabase
     .from("tags")
-    .select("id, slug, label_uk, category");
+    .select(TAGS_WITH_CATEGORY_SELECT);
 
-  if (tagsLoadError || !allTagRows?.length) {
+  const allTagRows = mapTagsQueryToProfileRows(tagRowsRaw);
+
+  if (tagsLoadError || !allTagRows.length) {
     return { ok: false, message: "Не вдалося завантажити теги." };
   }
 
