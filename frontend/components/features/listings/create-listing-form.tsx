@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { startTransition, useActionState, useMemo, useState, type FormEvent } from "react";
+import { startTransition, useActionState, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Controller, useForm } from "react-hook-form";
 import { createListingAction } from "@/app/actions/listings";
 import {
@@ -9,6 +10,7 @@ import {
   createListingFormSchema,
   type ListingFormValues,
 } from "@/app/schemas/listings";
+import { ListingPhotosPicker, type ListingPhotoItem } from "@/components/features/listings/listing-photos-picker";
 import { getListingTagDisplayLabel } from "@/lib/listings/listing-tag-display-labels";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 import { FieldError } from "@/components/features/profile/profile-form-feedback";
@@ -44,7 +46,8 @@ const CATEGORY_LABELS: Record<string, string> = {
 export function CreateListingForm({ regions, cities, tags }: Props) {
   const [state, formAction, isPending] = useActionState(createListingAction, undefined);
   const [selectedRegionId, setSelectedRegionId] = useState("");
-  const [selectedFilesCount, setSelectedFilesCount] = useState(0);
+  const [listingPhotos, setListingPhotos] = useState<ListingPhotoItem[]>([]);
+  const [photoFieldError, setPhotoFieldError] = useState<string | null>(null);
 
   const listingSchema = useMemo(() => createListingFormSchema(tags), [tags]);
   const form = useForm<ListingFormValues>({
@@ -69,6 +72,12 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     },
   });
   const selectedType = form.watch("type");
+
+  useEffect(() => {
+    if (listingPhotos.length > 0) {
+      setPhotoFieldError(null);
+    }
+  }, [listingPhotos.length]);
 
   const groupedTags = useMemo(() => {
     const map = new Map<string, ProfileTagRow[]>();
@@ -102,10 +111,8 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     fd.set("availableUntil", values.availableUntil ?? "");
     fd.set("requiredTagIds", JSON.stringify(selectedTagIds));
 
-    const imagesInput = document.getElementById("images") as HTMLInputElement | null;
-    const files = imagesInput?.files ? Array.from(imagesInput.files) : [];
-    for (const file of files) {
-      fd.append("images", file);
+    for (const row of listingPhotos) {
+      fd.append("images", row.file);
     }
 
     startTransition(() => {
@@ -115,7 +122,15 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    void form.handleSubmit(onSubmit)(event);
+    const hasPhotos = listingPhotos.length > 0;
+    setPhotoFieldError(hasPhotos ? null : "Додайте щонайменше одне фото.");
+
+    void form.trigger().then((formOk) => {
+      if (!formOk || !hasPhotos) {
+        return;
+      }
+      onSubmit(form.getValues());
+    });
   };
 
   return (
@@ -313,28 +328,11 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
             <FieldError message={form.formState.errors.availableUntil?.message} />
           </div>
 
-          <div className="grid gap-3 rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
-            <div className="grid gap-1">
-              <Label htmlFor="images" className="text-slate-700">
-                Фото анкети
-              </Label>
-              <p className="text-xs text-slate-500">Додайте мінімум 1 і максимум 10 фото (JPG, PNG, WEBP).</p>
-            </div>
-            <Input
-              id="images"
-              name="images"
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/jpg"
-              multiple
-              required
-              onChange={(event) => {
-                setSelectedFilesCount(event.target.files?.length ?? 0);
-              }}
-            />
-            <p className="text-xs text-slate-500">
-              {selectedFilesCount > 0 ? `Обрано фото: ${selectedFilesCount}` : "Фото ще не обрані"}
-            </p>
-          </div>
+          <ListingPhotosPicker
+            items={listingPhotos}
+            onItemsChange={setListingPhotos}
+            errorMessage={photoFieldError}
+          />
 
           <div className="grid gap-6 rounded-2xl border border-slate-200 bg-slate-50/40 p-4">
             <div className="grid gap-1">
@@ -385,7 +383,10 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
             </p>
           ) : null}
 
-          <div className="flex flex-wrap justify-end gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Button variant="outline" className="h-11 cursor-pointer px-6 font-bold" asChild>
+              <Link href="/my-listings">Повернутись назад</Link>
+            </Button>
             <Button type="submit" className="h-11 cursor-pointer px-6 font-bold" disabled={isPending}>
               {isPending ? "Створення..." : "Створити анкету"}
             </Button>

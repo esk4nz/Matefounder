@@ -8,6 +8,7 @@ import {
 } from "@/app/schemas/profile";
 import { createListingFormSchema } from "../schemas/listings";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
+import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
 import { createClient } from "@/lib/supabase/server";
 
 export type CreateListingGuardState = {
@@ -232,8 +233,11 @@ export async function createListingAction(
   if (imageFiles.length === 0) {
     return { ok: false, message: "Додайте щонайменше одне фото для анкети." };
   }
-  if (imageFiles.length > 10) {
-    return { ok: false, message: "Можна завантажити до 10 фото." };
+  if (imageFiles.length > LISTING_MAX_PHOTOS) {
+    return {
+      ok: false,
+      message: `Можна завантажити до ${LISTING_MAX_PHOTOS} фото.`,
+    };
   }
 
   for (const file of imageFiles) {
@@ -277,9 +281,12 @@ export async function createListingAction(
   });
 
   if (!parsedListing.success) {
+    const first =
+      parsedListing.error.issues[0]?.message ??
+      "Перевірте поля анкети та спробуйте ще раз.";
     return {
       ok: false,
-      message: "Перевірте коректність полів анкети та спробуйте ще раз.",
+      message: first,
     };
   }
 

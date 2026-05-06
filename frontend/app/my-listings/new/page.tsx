@@ -29,11 +29,6 @@ export default async function NewListingPage() {
 
   return (
     <section className="container mx-auto max-w-5xl px-6 py-12">
-      <h1 className="text-3xl font-black text-slate-900">Нова анкета</h1>
-      <p className="mt-3 max-w-3xl text-slate-600">
-        Заповніть основні дані оголошення: мету, локацію, умови проживання та очікування до співмешканця.
-      </p>
-
       <div className="mt-8">
         <CreateListingForm regions={regions} cities={cities} tags={tags} />
       </div>

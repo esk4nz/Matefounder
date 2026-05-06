@@ -31,7 +31,11 @@ export function createListingFormSchema(allTags: readonly ProfileTagRow[]) {
       type: z.enum(listingTypeValues, {
         message: "Оберіть мету анкети.",
       }),
-      title: z.string().trim().min(4, "Вкажіть назву анкети.").max(120, "Максимум 120 символів."),
+      title: z
+        .string()
+        .trim()
+        .min(4, "Назва надто коротка — потрібно щонайменше 4 символи.")
+        .max(120, "Назва занадто довга — максимум 120 символів."),
       cityId: z.string().uuid("Оберіть місто."),
       description: z
         .string()
@@ -42,7 +46,7 @@ export function createListingFormSchema(allTags: readonly ProfileTagRow[]) {
         .string()
         .optional()
         .transform((value) => value?.trim() ?? "")
-        .refine((value) => value.length <= 220, "Максимум 220 символів."),
+        .refine((value) => value.length <= 100, "Максимум 100 символів."),
       price: z
         .number({ message: "Вкажіть очікувану ціну." })
         .int("Ціна має бути цілим числом.")
