@@ -41,6 +41,22 @@ export default async function Navbar() {
             >
               Оголошення
             </Link>
+            {user?.id ? (
+              <>
+                <Link
+                  href="/my-listings"
+                  className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Мої оголошення
+                </Link>
+                <Link
+                  href="/reviews"
+                  className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Відгуки
+                </Link>
+              </>
+            ) : null}
             <Link
               href="/how-it-works"
               className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
