@@ -1264,6 +1264,7 @@ insert into public.tag_categories (name) values
 insert into public.tags (category_id, slug, label_uk) values
   ((select id from public.tag_categories where name = 'Звички'), 'smoke_yes', '🚬 Палю'),
   ((select id from public.tag_categories where name = 'Звички'), 'smoke_no', '🚭 Не палю'),
+  ((select id from public.tag_categories where name = 'Звички'), 'smoke_sometimes', '🔄 Інколи палю'),
 
   ((select id from public.tag_categories where name = 'Режим'), 'sleep_early', '☀️ Жайворонок (ранній підйом)'),
   ((select id from public.tag_categories where name = 'Режим'), 'sleep_late', '🦉 Сова (пізній відбій)'),
