@@ -22,6 +22,8 @@ export type ProfileInitialData = {
   lastName: string;
   gender: ProfileGenderForm;
   bio: string;
+  contactPhone: string;
+  contactTelegram: string;
   avatarUrl: string | null;
   tagSelections: ProfileTagSelectionsExclusive;
   tagInterests: number[];

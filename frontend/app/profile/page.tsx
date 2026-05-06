@@ -19,7 +19,9 @@ export default async function ProfilePage() {
   const [profileResult, tagsResult, profileTagsResult] = await Promise.all([
     supabase
       .from("profiles")
-      .select("username, first_name, last_name, bio, avatar_path, is_admin, gender, updated_at")
+      .select(
+        "username, first_name, last_name, bio, contact_phone, contact_telegram, avatar_path, is_admin, gender, updated_at",
+      )
       .eq("id", user.id)
       .maybeSingle(),
     supabase
@@ -69,6 +71,8 @@ export default async function ProfilePage() {
         lastName: lastNameFallback,
         gender,
         bio: profile.bio ?? "",
+        contactPhone: profile.contact_phone ?? "",
+        contactTelegram: profile.contact_telegram ?? "",
         avatarUrl,
         tagSelections,
         tagInterests,
