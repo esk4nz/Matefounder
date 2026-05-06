@@ -55,6 +55,8 @@ create table public.profiles (
   last_name text not null,
   avatar_path text,
   bio text,
+  contact_phone text,
+  contact_telegram text,
   gender text,
   embedding vector(768),
   is_blocked boolean not null default false,
@@ -467,6 +469,8 @@ grant update (
   last_name,
   avatar_path,
   bio,
+  contact_phone,
+  contact_telegram,
   gender,
   embedding
 ) on public.profiles to authenticated;

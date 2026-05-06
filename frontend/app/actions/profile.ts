@@ -138,6 +138,8 @@ export async function updateProfileAction(
     username: String(formData.get("username") ?? ""),
     gender: String(formData.get("gender") ?? ""),
     bio: String(formData.get("bio") ?? ""),
+    contactPhone: String(formData.get("contactPhone") ?? ""),
+    contactTelegram: String(formData.get("contactTelegram") ?? ""),
     tagSelections: expanded.tagSelections,
     tagInterests: expanded.tagInterests,
   });
@@ -197,6 +199,8 @@ export async function updateProfileAction(
       last_name: parsed.data.lastName.trim(),
       bio: parsed.data.bio,
       gender: parsed.data.gender,
+      contact_phone: parsed.data.contactPhone,
+      contact_telegram: parsed.data.contactTelegram || null,
       avatar_path: nextAvatarPath,
     })
     .eq("id", user.id)
@@ -249,6 +253,8 @@ export async function updateProfileAction(
       lastName: parsed.data.lastName.trim(),
       gender: parsed.data.gender,
       bio: parsed.data.bio,
+      contactPhone: parsed.data.contactPhone,
+      contactTelegram: parsed.data.contactTelegram,
       tagSelections: parsed.data.tagSelections,
       tagInterests: parsed.data.tagInterests,
       avatarUrl,

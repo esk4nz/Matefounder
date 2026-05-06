@@ -61,6 +61,8 @@ export function ProfileSettings({
     lastName: initialProfile.lastName,
     gender: initialProfile.gender,
     bio: initialProfile.bio,
+    contactPhone: initialProfile.contactPhone,
+    contactTelegram: initialProfile.contactTelegram,
     tagSelections: initialProfile.tagSelections,
     tagInterests: initialProfile.tagInterests,
   });
@@ -104,6 +106,8 @@ export function ProfileSettings({
       lastName: initialProfile.lastName,
       gender: initialProfile.gender,
       bio: initialProfile.bio,
+      contactPhone: initialProfile.contactPhone,
+      contactTelegram: initialProfile.contactTelegram,
       tagSelections: initialProfile.tagSelections,
       tagInterests: initialProfile.tagInterests,
     },
@@ -156,6 +160,8 @@ export function ProfileSettings({
         lastName: nextState.profile.lastName,
         gender: nextState.profile.gender,
         bio: nextState.profile.bio,
+        contactPhone: nextState.profile.contactPhone,
+        contactTelegram: nextState.profile.contactTelegram,
         tagSelections: nextState.profile.tagSelections,
         tagInterests: nextState.profile.tagInterests,
       };
@@ -368,6 +374,8 @@ export function ProfileSettings({
     fd.set("lastName", data.lastName);
     fd.set("gender", data.gender);
     fd.set("bio", data.bio ?? "");
+    fd.set("contactPhone", data.contactPhone);
+    fd.set("contactTelegram", data.contactTelegram ?? "");
     fd.set("tagIds", JSON.stringify(flattenProfileTagIds(data)));
     fd.set("removeAvatar", String(removeAvatar));
 
