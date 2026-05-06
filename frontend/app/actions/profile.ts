@@ -25,13 +25,24 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
-  reason?: "unauthenticated" | "missingProfile" | "adminAccount";
+  reason?: "unauthenticated" | "stale_auth_session" | "missingProfile" | "adminAccount";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
     selectedTagIds: number[];
     updatedAt: string;
   };
 };
+
+const STALE_AUTH_SESSION_MESSAGE =
+  "Ваша сесія застаріла. Будь ласка, спробуйте увійти знову.";
+
+function staleAuthSessionResponse(): ProfileMessage {
+  return {
+    ok: false,
+    message: STALE_AUTH_SESSION_MESSAGE,
+    reason: "stale_auth_session",
+  };
+}
 
 const PROFILE_STALE_VERSION_MESSAGE =
   "Дані застаріли. Будь ласка, оновіть сторінку, щоб побачити актуальні зміни.";
@@ -74,10 +85,11 @@ export async function updateProfileAction(
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
+  if (authError || !user) {
+    return staleAuthSessionResponse();
   }
 
   const expectedUpdatedAt = String(formData.get("expectedUpdatedAt") ?? "").trim();
@@ -253,10 +265,11 @@ export async function updatePasswordAction(
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
+  if (authError || !user) {
+    return staleAuthSessionResponse();
   }
 
   const { data: currentProfile, error: profileError } = await supabase
@@ -345,10 +358,11 @@ export async function deleteAccountAction(
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
+  if (authError || !user) {
+    return staleAuthSessionResponse();
   }
 
   const admin = createServiceRoleClient();

@@ -41,6 +41,8 @@ import { dispatchNavbarSync } from "@/lib/navbar-sync";
 
 const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
 
+const STALE_SESSION_HOME_ERROR = "stale_auth_session";
+
 export function ProfileSettings({
   initialEmail,
   initialProfile,
@@ -71,6 +73,12 @@ export function ProfileSettings({
   const [avatarInputVersion, setAvatarInputVersion] = useState(0);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(initialProfile.avatarUrl);
   const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(null);
+
+  const navigateHomeWithStaleSessionNotice = useCallback(() => {
+    dispatchNavbarSync();
+    router.replace(`/?error=${STALE_SESSION_HOME_ERROR}`);
+    router.refresh();
+  }, [router]);
 
   useEffect(() => {
     const message = window.sessionStorage.getItem(PROFILE_SUCCESS_MESSAGE_KEY);
@@ -137,6 +145,10 @@ export function ProfileSettings({
   ) => {
     const nextState = await updateProfileAction(previousState, formData);
 
+    if (!nextState.ok && nextState.reason === "stale_auth_session") {
+      navigateHomeWithStaleSessionNotice();
+    }
+
     if (nextState.ok && nextState.profile) {
       const nextProfileValues: ProfileValues = {
         username: nextState.profile.username,
@@ -174,15 +186,37 @@ export function ProfileSettings({
     return nextState;
   };
 
+  const handlePasswordAction = async (
+    previousState: ProfileMessage | undefined,
+    formData: FormData,
+  ): Promise<ProfileMessage> => {
+    const nextState = await updatePasswordAction(previousState, formData);
+    if (!nextState.ok && nextState.reason === "stale_auth_session") {
+      navigateHomeWithStaleSessionNotice();
+    }
+    return nextState;
+  };
+
+  const handleDeleteAction = async (
+    previousState: ProfileMessage | undefined,
+    formData: FormData,
+  ): Promise<ProfileMessage> => {
+    const nextState = await deleteAccountAction(previousState, formData);
+    if (!nextState.ok && nextState.reason === "stale_auth_session") {
+      navigateHomeWithStaleSessionNotice();
+    }
+    return nextState;
+  };
+
   const [profileState, profileFormAction, profilePending] = useActionState(
     handleProfileAction,
     undefined,
   );
   const [passwordState, passwordFormAction, passwordPending] = useActionState(
-    updatePasswordAction,
+    handlePasswordAction,
     undefined,
   );
-  const [deleteState, deleteFormAction, deletePending] = useActionState(deleteAccountAction, undefined);
+  const [deleteState, deleteFormAction, deletePending] = useActionState(handleDeleteAction, undefined);
 
   const redirectToHome = useCallback((reason?: "profile_not_found") => {
     dispatchNavbarSync();
@@ -199,6 +233,15 @@ export function ProfileSettings({
   }, []);
 
   useEffect(() => {
+    const hasStaleAuthSession =
+      profileState?.reason === "stale_auth_session" ||
+      passwordState?.reason === "stale_auth_session" ||
+      deleteState?.reason === "stale_auth_session";
+
+    if (hasStaleAuthSession) {
+      return;
+    }
+
     if (
       profileState?.reason === "unauthenticated" ||
       profileState?.reason === "missingProfile" ||
@@ -218,6 +261,10 @@ export function ProfileSettings({
   }, [deleteState, passwordState, profileState, redirectToHome]);
 
   useEffect(() => {
+    if (passwordState?.reason === "stale_auth_session") {
+      return;
+    }
+
     if (!passwordState?.ok) {
       return;
     }
