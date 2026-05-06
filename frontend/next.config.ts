@@ -1,10 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-    reactCompiler: true,
+  reactCompiler: true,
   experimental: {
-      turbopackFileSystemCacheForDev: true,
-  }
+    turbopackFileSystemCacheForDev: true,
+    serverActions: {
+      bodySizeLimit: "64mb",
+    },
+  },
 };
 
 export default nextConfig;

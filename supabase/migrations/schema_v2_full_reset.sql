@@ -15,6 +15,7 @@ drop table if exists public.reviews cascade;
 drop table if exists public.chat_messages cascade;
 drop table if exists public.chat_participants cascade;
 drop table if exists public.chat_rooms cascade;
+drop table if exists public.listing_required_tags cascade;
 drop table if exists public.listing_images cascade;
 drop table if exists public.listings cascade;
 drop table if exists public.profile_tags cascade;
@@ -97,7 +98,7 @@ create table public.profile_tags (
 create index if not exists profile_tags_tag_id_idx on public.profile_tags (tag_id);
 create index if not exists tags_category_id_idx on public.tags (category_id);
 
--- listings, listing_images
+-- listings, listing_images, listing_required_tags
 create table public.listings (
   id uuid primary key default gen_random_uuid(),
   creator_id uuid not null references public.profiles (id) on delete cascade,
@@ -106,6 +107,7 @@ create table public.listings (
   price integer not null check (price >= 0),
   title text not null,
   description text not null,
+  address text,
   available_from date not null,
   available_until date,
   is_active boolean not null default true,
@@ -131,6 +133,15 @@ create table public.listing_images (
 
 create index if not exists listing_images_listing_order_idx
   on public.listing_images (listing_id, order_index);
+
+create table public.listing_required_tags (
+  listing_id uuid not null references public.listings (id) on delete cascade,
+  tag_id integer not null references public.tags (id) on delete restrict,
+  primary key (listing_id, tag_id)
+);
+
+create index if not exists listing_required_tags_tag_id_idx
+  on public.listing_required_tags (tag_id);
 
 -- chat_rooms, chat_participants, chat_messages
 create table public.chat_rooms (
@@ -412,6 +423,7 @@ alter table public.tags enable row level security;
 alter table public.profile_tags enable row level security;
 alter table public.listings enable row level security;
 alter table public.listing_images enable row level security;
+alter table public.listing_required_tags enable row level security;
 alter table public.chat_rooms enable row level security;
 alter table public.chat_participants enable row level security;
 alter table public.chat_messages enable row level security;
@@ -651,6 +663,70 @@ create policy "listing_images_update_creator_not_blocked"
 drop policy if exists "listing_images_delete_creator" on public.listing_images;
 create policy "listing_images_delete_creator"
   on public.listing_images for delete
+  to authenticated
+  using (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
+    )
+  );
+
+-- RLS listing_required_tags
+drop policy if exists "listing_required_tags_select_visible" on public.listing_required_tags;
+create policy "listing_required_tags_select_visible"
+  on public.listing_required_tags for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id
+        and (
+          l.is_active = true
+          or l.creator_id = auth.uid()
+          or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+        )
+    )
+  );
+
+drop policy if exists "listing_required_tags_insert_creator_not_blocked" on public.listing_required_tags;
+create policy "listing_required_tags_insert_creator_not_blocked"
+  on public.listing_required_tags for insert
+  to authenticated
+  with check (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id
+        and l.creator_id = auth.uid()
+        and not exists (
+          select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+        )
+    )
+  );
+
+drop policy if exists "listing_required_tags_update_creator_not_blocked" on public.listing_required_tags;
+create policy "listing_required_tags_update_creator_not_blocked"
+  on public.listing_required_tags for update
+  to authenticated
+  using (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id
+        and l.creator_id = auth.uid()
+        and not exists (
+          select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+        )
+    )
+  );
+
+drop policy if exists "listing_required_tags_delete_creator" on public.listing_required_tags;
+create policy "listing_required_tags_delete_creator"
+  on public.listing_required_tags for delete
   to authenticated
   using (
     exists (
