@@ -8,7 +8,10 @@ import {
 } from "@/app/schemas/profile";
 import { createListingFormSchema } from "../schemas/listings";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
+import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
+import { LISTING_DETAILS_SELECT } from "@/lib/listings/listing-details-select";
+import type { ListingDetailsPayload, ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
 
 export type CreateListingGuardState = {
@@ -23,6 +26,21 @@ export type CreateListingActionState = {
   message?: string;
   reason?: "unauthenticated" | "missingProfile";
 };
+
+export type MyListingFreshDataActionResult =
+  | { ok: false; reason: "unauthenticated" | "notFound" | "unknown" }
+  | {
+      ok: true;
+      details: ListingDetailsPayload;
+      card: {
+        id: string;
+        title: string;
+        type: "offering" | "searching";
+        isActive: boolean;
+        firstImageUrl: string | null;
+        details: ListingDetailsPayload;
+      };
+    };
 
 function joinUkrainianList(parts: string[]) {
   if (parts.length === 0) {
@@ -366,4 +384,60 @@ export async function createListingAction(
   }
 
   redirect("/my-listings");
+}
+
+export async function getMyListingFreshDataAction(
+  listingId: string,
+): Promise<MyListingFreshDataActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const [{ data: listingRow }, { data: reviewRatings }] = await Promise.all([
+    supabase
+      .from("listings")
+      .select(LISTING_DETAILS_SELECT)
+      .eq("id", listingId)
+      .eq("creator_id", user.id)
+      .maybeSingle(),
+    supabase.from("reviews").select("rating").eq("target_id", user.id),
+  ]);
+
+  if (!listingRow) {
+    return { ok: false, reason: "notFound" };
+  }
+
+  let reviewSummary: ListingDetailsReviewSummary | null = null;
+  const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
+  if (ratings.length > 0) {
+    const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
+    reviewSummary = {
+      averageOutOf10: avg5 * 2,
+      count: ratings.length,
+    };
+  }
+
+  const row = listingRow as ListingDetailsQueryRow;
+  const details = buildListingDetailsPayload(row, {
+    supabase,
+    reviewSummary,
+  });
+
+  return {
+    ok: true,
+    details,
+    card: {
+      id: row.id,
+      title: row.title,
+      type: details.type,
+      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
+      firstImageUrl: details.imageUrls[0] ?? null,
+      details,
+    },
+  };
 }

@@ -69,8 +69,14 @@ function TagChip({ label }: { label: string }) {
   );
 }
 
+function SkeletonBlock({ className }: { className: string }) {
+  return <div className={`animate-pulse rounded-md bg-slate-200 ${className}`} aria-hidden />;
+}
+
 export type ListingDetailsModalProps = {
   listing: ListingDetailsPayload | null;
+  fallbackTitle?: string | null;
+  loading?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentUserId: string;
@@ -79,6 +85,8 @@ export type ListingDetailsModalProps = {
 
 export function ListingDetailsModal({
   listing,
+  fallbackTitle,
+  loading = false,
   open,
   onOpenChange,
   currentUserId,
@@ -112,57 +120,80 @@ export function ListingDetailsModal({
           }
         }}
       >
-        {listing ? (
-          <>
-            <DialogHeader className="shrink-0 space-y-1 border-b border-border px-5 py-4">
-              <DialogTitle className="text-left text-lg font-bold leading-snug text-slate-900">
-                {listing.title}
-              </DialogTitle>
-            </DialogHeader>
+        <>
+          <DialogHeader className="shrink-0 space-y-1 border-b border-border px-5 py-4">
+            <DialogTitle className="text-left text-lg font-bold leading-snug text-slate-900">
+              {listing?.title ?? fallbackTitle ?? <SkeletonBlock className="h-7 w-72 max-w-full" />}
+            </DialogTitle>
+          </DialogHeader>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-gutter:stable]">
-              <div className="space-y-5 px-5 py-4">
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-gutter:stable]">
+            <div className="space-y-5 px-5 py-4">
+              {loading || !listing ? (
+                <SkeletonBlock className="aspect-[4/3] w-full rounded-xl" />
+              ) : (
                 <ListingPhotoCarousel imageUrls={listing.imageUrls} />
+              )}
 
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                  <p className="text-sm font-semibold text-slate-900">
-                    {listing.creatorFirstName} {listing.creatorLastName}
-                  </p>
+                  {loading || !listing ? (
+                    <SkeletonBlock className="h-5 w-40" />
+                  ) : (
+                    <p className="text-sm font-semibold text-slate-900">
+                      {listing.creatorFirstName} {listing.creatorLastName}
+                    </p>
+                  )}
                   <div className="text-sm">
-                    <Link
-                      href={`/profile/${listing.creatorId}/reviews`}
-                      className="font-medium text-blue-700 underline-offset-2 hover:underline"
-                    >
-                      {listing.reviewSummary && listing.reviewSummary.count > 0
-                        ? `⭐ ${listing.reviewSummary.averageOutOf10.toFixed(1)}/10 (${reviewsCountPhrase(
-                            listing.reviewSummary.count,
-                          )})`
-                        : "ще немає відгуків"}
-                    </Link>
+                    {loading || !listing ? (
+                      <SkeletonBlock className="h-5 w-44" />
+                    ) : (
+                      <Link
+                        href={`/profile/${listing.creatorId}/reviews`}
+                        className="font-medium text-blue-700 underline-offset-2 hover:underline"
+                      >
+                        {listing.reviewSummary && listing.reviewSummary.count > 0
+                          ? `⭐ ${listing.reviewSummary.averageOutOf10.toFixed(1)}/10 (${reviewsCountPhrase(
+                              listing.reviewSummary.count,
+                            )})`
+                          : "ще немає відгуків"}
+                      </Link>
+                    )}
                   </div>
                 </div>
 
                 <dl className="grid grid-cols-2 gap-x-3 gap-y-3 text-sm">
                   <div>
                     <dt className="text-xs font-medium text-slate-500">Тип</dt>
-                    <dd className="mt-0.5 font-medium text-slate-900">
-                      {LISTING_TYPE_LABEL[listing.type]}
-                    </dd>
+                    {loading || !listing ? (
+                      <SkeletonBlock className="mt-1 h-5 w-28" />
+                    ) : (
+                      <dd className="mt-0.5 font-medium text-slate-900">
+                        {LISTING_TYPE_LABEL[listing.type]}
+                      </dd>
+                    )}
                   </div>
                   <div>
                     <dt className="text-xs font-medium text-slate-500">
-                      {listing.type === "searching" ? "Бюджет" : "Ціна"}
+                      {loading || !listing ? "Ціна / Бюджет" : listing.type === "searching" ? "Бюджет" : "Ціна"}
                     </dt>
-                    <dd className="mt-0.5 font-medium text-slate-900">
-                      {listing.price.toLocaleString("uk-UA")} ₴
-                    </dd>
+                    {loading || !listing ? (
+                      <SkeletonBlock className="mt-1 h-5 w-24" />
+                    ) : (
+                      <dd className="mt-0.5 font-medium text-slate-900">
+                        {listing.price.toLocaleString("uk-UA")} ₴
+                      </dd>
+                    )}
                   </div>
                   <div className="col-span-2">
                     <dt className="text-xs font-medium text-slate-500">Локація</dt>
-                    <dd className="mt-0.5 font-medium text-slate-900">
-                      {listing.cityName}, {listing.regionName}
-                    </dd>
-                    {listing.address ? (
+                    {loading || !listing ? (
+                      <SkeletonBlock className="mt-1 h-5 w-52" />
+                    ) : (
+                      <dd className="mt-0.5 font-medium text-slate-900">
+                        {listing.cityName}, {listing.regionName}
+                      </dd>
+                    )}
+                    {!loading && listing?.address ? (
                       <dd className="mt-1.5 flex gap-1.5 text-slate-700">
                         <MapPinIcon
                           className="mt-0.5 size-4 shrink-0 text-slate-500"
@@ -174,22 +205,39 @@ export function ListingDetailsModal({
                   </div>
                   <div className="col-span-2 space-y-1">
                     <dt className="text-xs font-medium text-slate-500">Дати</dt>
-                    <dd className="font-medium text-slate-900">
-                      Дата заселення з: {formatUaLongDate(listing.availableFrom)}
-                    </dd>
-                    {listing.availableUntil ? (
-                      <dd className="font-medium text-slate-900">
-                        Дата виселення: {formatUaLongDate(listing.availableUntil)}
-                      </dd>
-                    ) : null}
+                    {loading || !listing ? (
+                      <>
+                        <SkeletonBlock className="h-5 w-56" />
+                        <SkeletonBlock className="h-5 w-44" />
+                      </>
+                    ) : (
+                      <>
+                        <dd className="font-medium text-slate-900">
+                          Дата заселення з: {formatUaLongDate(listing.availableFrom)}
+                        </dd>
+                        {listing.availableUntil ? (
+                          <dd className="font-medium text-slate-900">
+                            Дата виселення: {formatUaLongDate(listing.availableUntil)}
+                          </dd>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </dl>
 
                 <div>
                   <h3 className="text-xs font-medium text-slate-500">Опис</h3>
-                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
-                    {listing.description}
-                  </p>
+                  {loading || !listing ? (
+                    <div className="mt-1.5 space-y-2">
+                      <SkeletonBlock className="h-4 w-full" />
+                      <SkeletonBlock className="h-4 w-[92%]" />
+                      <SkeletonBlock className="h-4 w-[70%]" />
+                    </div>
+                  ) : (
+                    <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
+                      {listing.description}
+                    </p>
+                  )}
                 </div>
 
                 <div className="grid gap-6 sm:grid-cols-2">
@@ -197,14 +245,16 @@ export function ListingDetailsModal({
                     <p className="text-sm font-semibold text-slate-900">Вимоги до сусіда</p>
                     <div className="space-y-3">
                       {PROFILE_EXCLUSIVE_CATEGORIES.map((cat) => {
-                        const tag = listing.requiredByCategory[cat];
+                        const tag = listing?.requiredByCategory[cat];
                         return (
                           <div key={cat}>
                             <p className="text-xs font-medium text-slate-500">
                               {EXCLUSIVE_CATEGORY_LABEL_UK[cat]}
                             </p>
                             <div className="mt-1">
-                              {tag ? (
+                              {loading ? (
+                                <SkeletonBlock className="h-6 w-28 rounded-full" />
+                              ) : tag ? (
                                 <TagChip
                                   label={getListingTagDisplayLabel(tag.slug, tag.labelUk)}
                                 />
@@ -221,14 +271,16 @@ export function ListingDetailsModal({
                     <p className="text-sm font-semibold text-slate-900">Про автора</p>
                     <div className="space-y-3">
                       {PROFILE_EXCLUSIVE_CATEGORIES.map((cat) => {
-                        const tag = listing.authorByCategory[cat];
+                        const tag = listing?.authorByCategory[cat];
                         return (
                           <div key={cat}>
                             <p className="text-xs font-medium text-slate-500">
                               {EXCLUSIVE_CATEGORY_LABEL_UK[cat]}
                             </p>
                             <div className="mt-1">
-                              {tag ? (
+                              {loading ? (
+                                <SkeletonBlock className="h-6 w-28 rounded-full" />
+                              ) : tag ? (
                                 <TagChip
                                   label={getListingTagDisplayLabel(tag.slug, tag.labelUk)}
                                 />
@@ -245,7 +297,13 @@ export function ListingDetailsModal({
 
                 <div className="space-y-2 pb-1">
                   <p className="text-sm font-semibold text-slate-900">Інтереси</p>
-                  {listing.authorInterests.length > 0 ? (
+                  {loading || !listing ? (
+                    <div className="flex flex-wrap gap-2">
+                      <SkeletonBlock className="h-6 w-20 rounded-full" />
+                      <SkeletonBlock className="h-6 w-24 rounded-full" />
+                      <SkeletonBlock className="h-6 w-16 rounded-full" />
+                    </div>
+                  ) : listing.authorInterests.length > 0 ? (
                     <div className="flex flex-wrap gap-2">
                       {listing.authorInterests.map((tag) => (
                         <TagChip
@@ -261,26 +319,25 @@ export function ListingDetailsModal({
               </div>
             </div>
 
-            <DialogFooter className="mx-0 mb-0 shrink-0 gap-2 rounded-none border-t bg-muted/40 px-5 py-4 sm:flex-row sm:justify-end">
-              <DialogClose asChild>
-                <Button type="button" variant="outline">
-                  Закрити
-                </Button>
-              </DialogClose>
-              {showInterested ? (
-                <Button
-                  type="button"
-                  className="bg-blue-600 hover:bg-blue-700"
-                  onClick={() => {
-                    onInterested?.();
-                  }}
-                >
-                  Зацікавлений
-                </Button>
-              ) : null}
-            </DialogFooter>
-          </>
-        ) : null}
+          <DialogFooter className="mx-0 mb-0 shrink-0 gap-2 rounded-none border-t bg-muted/40 px-5 py-4 sm:flex-row sm:justify-end">
+            <DialogClose asChild>
+              <Button type="button" variant="outline">
+                Закрити
+              </Button>
+            </DialogClose>
+            {showInterested && !loading ? (
+              <Button
+                type="button"
+                className="bg-blue-600 hover:bg-blue-700"
+                onClick={() => {
+                  onInterested?.();
+                }}
+              >
+                Зацікавлений
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </>
       </DialogContent>
     </Dialog>
   );

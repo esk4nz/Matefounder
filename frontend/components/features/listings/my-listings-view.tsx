@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
+import { getMyListingFreshDataAction } from "@/app/actions/listings";
 import type { ListingDetailsPayload } from "@/lib/listings/listing-details-types";
 import { CreateListingCta } from "@/components/features/listings/create-listing-cta";
 import { ListingDetailsModal } from "@/components/features/listings/listing-details-modal";
@@ -26,10 +27,64 @@ const TYPE_SUBLINE: Record<MyListingCardModel["type"], string> = {
 };
 
 export function MyListingsView({ userId, listings }: MyListingsViewProps) {
+  const [listingCards, setListingCards] = useState(listings);
   const [openListingId, setOpenListingId] = useState<string | null>(null);
-  const activeListing = openListingId
-    ? (listings.find((l) => l.id === openListingId) ?? null)
-    : null;
+  const [activeListingDetails, setActiveListingDetails] = useState<ListingDetailsPayload | null>(null);
+  const [isDetailsLoading, setIsDetailsLoading] = useState(false);
+  const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const activeListingTitle =
+    openListingId ? (listingCards.find((listing) => listing.id === openListingId)?.title ?? null) : null;
+
+  useEffect(() => {
+    if (!openListingId) {
+      setActiveListingDetails(null);
+      setIsDetailsLoading(false);
+      return;
+    }
+
+    setActiveListingDetails(null);
+    setIsDetailsLoading(true);
+
+    let cancelled = false;
+    const loadFreshDetails = async () => {
+      try {
+        const result = await getMyListingFreshDataAction(openListingId);
+        if (cancelled) {
+          return;
+        }
+        if (!result.ok) {
+          if (result.reason === "notFound") {
+            setListingCards((prev) => prev.filter((card) => card.id !== openListingId));
+            setOpenListingId(null);
+            setActiveListingDetails(null);
+            setSyncWarning("Це оголошення вже недоступне. Список оновлено.");
+          } else if (result.reason === "unauthenticated") {
+            setOpenListingId(null);
+            setActiveListingDetails(null);
+            setSyncWarning("Сесія завершилася. Оновіть сторінку та увійдіть повторно.");
+          } else {
+            setSyncWarning("Не вдалося оновити дані оголошення. Спробуйте ще раз.");
+          }
+          return;
+        }
+        setSyncWarning(null);
+        setActiveListingDetails(result.details);
+        setListingCards((prev) =>
+          prev.map((card) => (card.id === result.card.id ? result.card : card)),
+        );
+      } catch {
+      } finally {
+        if (!cancelled) {
+          setIsDetailsLoading(false);
+        }
+      }
+    };
+
+    void loadFreshDetails();
+    return () => {
+      cancelled = true;
+    };
+  }, [openListingId]);
 
   return (
     <section className="container mx-auto max-w-5xl px-6 py-12">
@@ -39,14 +94,19 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
       </p>
 
       <CreateListingCta />
+      {syncWarning ? (
+        <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {syncWarning}
+        </div>
+      ) : null}
 
-      {listings.length === 0 ? (
+      {listingCards.length === 0 ? (
         <div className="mt-8 rounded-2xl border border-blue-100 bg-white/80 px-6 py-14 text-center shadow-sm">
           <p className="text-base font-medium text-slate-600">У вас поки немає активних оголошень.</p>
         </div>
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {listings.map((listing) => (
+          {listingCards.map((listing) => (
             <article
               key={listing.id}
               className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
@@ -95,7 +155,9 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
       )}
 
       <ListingDetailsModal
-        listing={activeListing?.details ?? null}
+        listing={activeListingDetails}
+        fallbackTitle={activeListingTitle}
+        loading={isDetailsLoading}
         open={openListingId !== null}
         onOpenChange={(next) => {
           if (!next) {
