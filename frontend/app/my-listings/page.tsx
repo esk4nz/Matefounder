@@ -1,5 +1,31 @@
 import { redirect } from "next/navigation";
+
+import type { MyListingCardModel } from "@/components/features/listings/my-listings-view";
+import { MyListingsView } from "@/components/features/listings/my-listings-view";
+import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details-payload";
+import type { ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
+
+const LISTING_DETAIL_SELECT = `
+  id,
+  title,
+  type,
+  description,
+  price,
+  address,
+  available_from,
+  available_until,
+  creator_id,
+  is_active,
+  listing_images(image_path, order_index),
+  cities(name, regions(name)),
+  listing_required_tags(tags(id, slug, label_uk, category_id, tag_categories(name))),
+  profiles!listings_creator_id_fkey(
+    first_name,
+    last_name,
+    profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
+  )
+`;
 
 export default async function MyListingsPage() {
   const supabase = await createClient();
@@ -11,15 +37,40 @@ export default async function MyListingsPage() {
     redirect("/");
   }
 
-  return (
-    <section className="container mx-auto max-w-5xl px-6 py-12">
-      <h1 className="text-3xl font-black text-slate-900">Мої оголошення</h1>
-      <p className="mt-3 max-w-2xl text-slate-600">
-        Керуйте своїми оголошеннями та відстежуйте відповіді від інших користувачів.
-      </p>
-      <div className="mt-10 rounded-2xl border border-blue-100 bg-white/80 px-6 py-14 text-center shadow-sm">
-        <p className="text-base font-medium text-slate-600">У вас поки немає активних оголошень.</p>
-      </div>
-    </section>
-  );
+  const [{ data: listingsRows }, { data: reviewRatings }] = await Promise.all([
+    supabase
+      .from("listings")
+      .select(LISTING_DETAIL_SELECT)
+      .eq("creator_id", user.id)
+      .order("updated_at", { ascending: false }),
+    supabase.from("reviews").select("rating").eq("target_id", user.id),
+  ]);
+
+  let reviewSummary: ListingDetailsReviewSummary | null = null;
+  const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
+  if (ratings.length > 0) {
+    const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
+    reviewSummary = {
+      averageOutOf10: avg5 * 2,
+      count: ratings.length,
+    };
+  }
+
+  const listings: MyListingCardModel[] = (listingsRows ?? []).map((row) => {
+    const details = buildListingDetailsPayload(row, {
+      supabase,
+      reviewSummary,
+    });
+    const firstImageUrl = details.imageUrls[0] ?? null;
+    return {
+      id: row.id,
+      title: row.title,
+      type: details.type,
+      isActive: row.is_active,
+      firstImageUrl,
+      details,
+    };
+  });
+
+  return <MyListingsView userId={user.id} listings={listings} />;
 }
