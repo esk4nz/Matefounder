@@ -3,9 +3,30 @@ import { redirect } from "next/navigation";
 import type { MyListingCardModel } from "@/components/features/listings/my-listings-view";
 import { MyListingsView } from "@/components/features/listings/my-listings-view";
 import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details-payload";
-import { LISTING_DETAILS_SELECT } from "@/lib/listings/listing-details-select";
 import type { ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
+
+const LISTING_DETAILS_SELECT = `
+  id,
+  title,
+  type,
+  description,
+  price,
+  address,
+  available_from,
+  available_until,
+  creator_id,
+  is_active,
+  updated_at,
+  listing_images(image_path, order_index),
+  cities(name, regions(name)),
+  listing_required_tags(tags(id, slug, label_uk, category_id, tag_categories(name))),
+  profiles!listings_creator_id_fkey(
+    first_name,
+    last_name,
+    profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
+  )
+`;
 
 export default async function MyListingsPage() {
   const supabase = await createClient();
@@ -47,6 +68,7 @@ export default async function MyListingsPage() {
       title: row.title,
       type: details.type,
       isActive: row.is_active,
+      updatedAt: row.updated_at,
       firstImageUrl,
       details,
     };

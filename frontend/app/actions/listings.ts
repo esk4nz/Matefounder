@@ -1,6 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   PROFILE_EXCLUSIVE_CATEGORIES,
@@ -10,7 +11,6 @@ import { createListingFormSchema } from "../schemas/listings";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
-import { LISTING_DETAILS_SELECT } from "@/lib/listings/listing-details-select";
 import type { ListingDetailsPayload, ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
 
@@ -37,10 +37,41 @@ export type MyListingFreshDataActionResult =
         title: string;
         type: "offering" | "searching";
         isActive: boolean;
+        updatedAt: string;
         firstImageUrl: string | null;
         details: ListingDetailsPayload;
       };
     };
+
+export type UpdateMyListingStatusActionResult =
+  | { ok: false; message: string }
+  | { ok: true; isActive: boolean; updatedAt: string };
+
+export type DeleteMyListingActionResult =
+  | { ok: false; message: string }
+  | { ok: true };
+
+const LISTING_DETAILS_SELECT = `
+  id,
+  title,
+  type,
+  description,
+  price,
+  address,
+  available_from,
+  available_until,
+  creator_id,
+  is_active,
+  updated_at,
+  listing_images(image_path, order_index),
+  cities(name, regions(name)),
+  listing_required_tags(tags(id, slug, label_uk, category_id, tag_categories(name))),
+  profiles!listings_creator_id_fkey(
+    first_name,
+    last_name,
+    profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
+  )
+`;
 
 function joinUkrainianList(parts: string[]) {
   if (parts.length === 0) {
@@ -436,8 +467,119 @@ export async function getMyListingFreshDataAction(
       title: row.title,
       type: details.type,
       isActive: typeof row.is_active === "boolean" ? row.is_active : true,
+      updatedAt: row.updated_at,
       firstImageUrl: details.imageUrls[0] ?? null,
       details,
     },
   };
+}
+
+export async function updateMyListingStatusAction(
+  listingId: string,
+  isActive: boolean,
+  expectedUpdatedAt: string,
+): Promise<UpdateMyListingStatusActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Оновіть сторінку та увійдіть повторно." };
+  }
+
+  const { data: listingRow, error: listingError } = await supabase
+    .from("listings")
+    .select("id, updated_at")
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (listingError) {
+    return { ok: false, message: "Не вдалося перевірити стан оголошення. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!listingRow) {
+    return { ok: false, message: "Оголошення більше недоступне. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("listings")
+    .update({ is_active: isActive })
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .eq("updated_at", expectedUpdatedAt)
+    .select("updated_at");
+
+  if (updateError) {
+    return { ok: false, message: "Не вдалося змінити статус оголошення. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!updatedRows?.length) {
+    return { ok: false, message: "Дані застаріли. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  revalidatePath("/my-listings");
+  return { ok: true, isActive, updatedAt: updatedRows[0].updated_at };
+}
+
+export async function deleteMyListingAction(
+  listingId: string,
+  expectedUpdatedAt: string,
+): Promise<DeleteMyListingActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Оновіть сторінку та увійдіть повторно." };
+  }
+
+  const { data: listingRow, error: listingError } = await supabase
+    .from("listings")
+    .select("id")
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (listingError) {
+    return { ok: false, message: "Не вдалося перевірити стан оголошення. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!listingRow) {
+    return { ok: false, message: "Оголошення більше недоступне. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const { data: imageRows, error: imagesError } = await supabase
+    .from("listing_images")
+    .select("image_path")
+    .eq("listing_id", listingId);
+
+  if (imagesError) {
+    return { ok: false, message: "Не вдалося підготувати видалення. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const imagePaths = (imageRows ?? [])
+    .map((row) => row.image_path)
+    .filter((path): path is string => typeof path === "string" && path.length > 0);
+
+  const { data: deletedRows, error: deleteError } = await supabase
+    .from("listings")
+    .delete()
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .eq("updated_at", expectedUpdatedAt)
+    .select("id");
+
+  if (deleteError) {
+    return { ok: false, message: "Не вдалося видалити оголошення. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!deletedRows?.length) {
+    return { ok: false, message: "Дані застаріли. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  if (imagePaths.length > 0) {
+    await supabase.storage.from("listing-images").remove(imagePaths);
+  }
+
+  revalidatePath("/my-listings");
+  return { ok: true };
 }

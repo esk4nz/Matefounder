@@ -50,7 +50,7 @@ export default async function Navbar() {
                   Мої оголошення
                 </Link>
                 <Link
-                  href="/reviews"
+                  href={`/profile/${user.id}/reviews`}
                   className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
                 >
                   Відгуки
