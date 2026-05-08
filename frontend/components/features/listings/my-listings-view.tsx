@@ -10,6 +10,10 @@ import {
   updateMyListingStatusAction,
 } from "@/app/actions/listings";
 import type { ListingDetailsPayload } from "@/lib/listings/listing-details-types";
+import {
+  getListingMyListingsFlashMessage,
+  LISTING_MY_LISTINGS_FLASH_STORAGE_KEY,
+} from "@/lib/listings/listing-error-codes";
 import { CreateListingCta } from "@/components/features/listings/create-listing-cta";
 import { ListingDetailsModal } from "@/components/features/listings/listing-details-modal";
 import {
@@ -66,6 +70,18 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
   const deleteTarget = deleteTargetListingId
     ? (listingCards.find((listing) => listing.id === deleteTargetListingId) ?? null)
     : null;
+
+  useEffect(() => {
+    const raw = window.sessionStorage.getItem(LISTING_MY_LISTINGS_FLASH_STORAGE_KEY);
+    if (!raw) {
+      return;
+    }
+    window.sessionStorage.removeItem(LISTING_MY_LISTINGS_FLASH_STORAGE_KEY);
+    const message = getListingMyListingsFlashMessage(raw);
+    if (message) {
+      setSyncWarning(message);
+    }
+  }, []);
 
   const handleStatusToggle = async (listing: MyListingCardModel) => {
     const nextIsActive = !listing.isActive;

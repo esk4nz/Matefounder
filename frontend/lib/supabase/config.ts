@@ -6,7 +6,6 @@ export function getSupabaseUrl(): string {
   return url;
 }
 
-/** Публічний ключ (anon / publishable) для клієнта та SSR. */
 export function getSupabaseAnonKey(): string {
   const key =
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??

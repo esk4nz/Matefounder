@@ -1,34 +1,50 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { startTransition, useActionState, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { createListingAction } from "@/app/actions/listings";
+import { checkMyListingExistsAction, updateMyListingAction } from "@/app/actions/listings";
+import {
+  LISTING_FLASH_CODE,
+  LISTING_MY_LISTINGS_FLASH_STORAGE_KEY,
+} from "@/lib/listings/listing-error-codes";
 import {
   LISTING_EXCLUSIVE_CATEGORIES,
   createListingFormSchema,
   type ListingFormValues,
 } from "@/app/schemas/listings";
-import { ListingPhotosPicker, type AnyListingPhotoItem } from "@/components/features/listings/listing-photos-picker";
-import { getListingTagDisplayLabel } from "@/lib/listings/listing-tag-display-labels";
-import type { ProfileTagRow } from "@/components/features/profile/profile-types";
+import {
+  ListingPhotosPicker,
+  type AnyListingPhotoItem,
+  type ExistingListingPhotoItem,
+} from "@/components/features/listings/listing-photos-picker";
 import { FieldError } from "@/components/features/profile/profile-form-feedback";
+import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { getListingTagDisplayLabel } from "@/lib/listings/listing-tag-display-labels";
 import { cn } from "@/lib/utils";
 
 type RegionOption = { id: string; name: string };
 type CityOption = { id: string; name: string; region_id: string };
 
+type InitialListing = {
+  id: string;
+  updatedAt: string;
+  values: ListingFormValues;
+  imageItems: ExistingListingPhotoItem[];
+};
+
 type Props = {
   regions: RegionOption[];
   cities: CityOption[];
   tags: ProfileTagRow[];
+  initialListing: InitialListing;
 };
 
 const LISTING_TYPE_OPTIONS = [
@@ -43,42 +59,21 @@ const CATEGORY_LABELS: Record<string, string> = {
   pets: "Тварини",
 };
 
-export function CreateListingForm({ regions, cities, tags }: Props) {
-  const [state, formAction, isPending] = useActionState(createListingAction, undefined);
-  const [selectedRegionId, setSelectedRegionId] = useState("");
-  const [listingPhotos, setListingPhotos] = useState<AnyListingPhotoItem[]>([]);
+export function EditListingForm({ regions, cities, tags, initialListing }: Props) {
+  const router = useRouter();
+  const [state, formAction, isPending] = useActionState(updateMyListingAction, undefined);
+  const initialCity = cities.find((city) => city.id === initialListing.values.cityId);
+  const [selectedRegionId, setSelectedRegionId] = useState(initialCity?.region_id ?? "");
+  const [listingPhotos, setListingPhotos] = useState<AnyListingPhotoItem[]>(initialListing.imageItems);
   const [photoFieldError, setPhotoFieldError] = useState<string | null>(null);
-
   const listingSchema = useMemo(() => createListingFormSchema(tags), [tags]);
   const form = useForm<ListingFormValues>({
     resolver: zodResolver(listingSchema),
     mode: "onSubmit",
     reValidateMode: "onChange",
-    defaultValues: {
-      type: "offering",
-      title: "",
-      cityId: "",
-      description: "",
-      address: "",
-      price: 0,
-      availableFrom: "",
-      availableUntil: "",
-      tagSelections: {
-        habits: null,
-        routine: null,
-        social: null,
-        pets: null,
-      },
-    },
+    defaultValues: initialListing.values,
   });
   const selectedType = form.watch("type");
-
-  useEffect(() => {
-    if (listingPhotos.length > 0) {
-      setPhotoFieldError(null);
-    }
-  }, [listingPhotos.length]);
-
   const groupedTags = useMemo(() => {
     const map = new Map<string, ProfileTagRow[]>();
     for (const tag of tags) {
@@ -88,19 +83,65 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     }
     return map;
   }, [tags]);
-
   const citiesForRegion = useMemo(
     () => cities.filter((city) => city.region_id === selectedRegionId),
     [cities, selectedRegionId],
   );
+  const serverError =
+    state && state.ok === false && "message" in state ? state.message : null;
 
-  const serverError = state && state.ok === false ? state.message : null;
+  useEffect(() => {
+    if (state?.ok) {
+      router.push("/my-listings");
+      router.refresh();
+    }
+  }, [router, state]);
+
+  useEffect(() => {
+    if (state?.ok === false && "reason" in state && state.reason === LISTING_FLASH_CODE.listingNotFound) {
+      window.sessionStorage.setItem(LISTING_MY_LISTINGS_FLASH_STORAGE_KEY, LISTING_FLASH_CODE.listingNotFound);
+      router.replace("/my-listings");
+      router.refresh();
+    }
+  }, [router, state]);
+
+  useEffect(() => {
+    const listingId = initialListing.id;
+    let cancelled = false;
+    const verify = async () => {
+      const result = await checkMyListingExistsAction(listingId);
+      if (cancelled) {
+        return;
+      }
+      if (result.ok === false && result.reason === "not_found") {
+        window.sessionStorage.setItem(LISTING_MY_LISTINGS_FLASH_STORAGE_KEY, LISTING_FLASH_CODE.listingNotFound);
+        router.replace("/my-listings");
+        router.refresh();
+      }
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void verify();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    void verify();
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [initialListing.id, router]);
 
   const onSubmit = (values: ListingFormValues) => {
     const selectedTagIds = Object.values(values.tagSelections ?? {}).filter(
       (id): id is number => typeof id === "number",
     );
+    const keptImagePaths = listingPhotos
+      .filter((photo): photo is ExistingListingPhotoItem => photo.kind === "existing")
+      .map((photo) => photo.imagePath);
     const fd = new FormData();
+    fd.set("listingId", initialListing.id);
+    fd.set("expectedUpdatedAt", initialListing.updatedAt);
     fd.set("type", values.type);
     fd.set("title", values.title ?? "");
     fd.set("cityId", values.cityId);
@@ -110,7 +151,7 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     fd.set("availableFrom", values.availableFrom);
     fd.set("availableUntil", values.availableUntil ?? "");
     fd.set("requiredTagIds", JSON.stringify(selectedTagIds));
-
+    fd.set("keptImagePaths", JSON.stringify(keptImagePaths));
     for (const row of listingPhotos) {
       if (row.kind === "new") {
         fd.append("images", row.file);
@@ -126,7 +167,6 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     event.preventDefault();
     const hasPhotos = listingPhotos.length > 0;
     setPhotoFieldError(hasPhotos ? null : "Додайте щонайменше одне фото.");
-
     void form.trigger().then((formOk) => {
       if (!formOk || !hasPhotos) {
         return;
@@ -135,10 +175,15 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     });
   };
 
+  const handleCancel = () => {
+    router.push("/my-listings");
+    router.refresh();
+  };
+
   return (
     <Card className="border-none bg-white shadow-[0_18px_50px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/80">
       <CardHeader>
-        <CardTitle className="text-2xl font-black text-slate-900">Створення анкети</CardTitle>
+        <CardTitle className="text-2xl font-black text-slate-900">Редагування анкети</CardTitle>
       </CardHeader>
       <CardContent>
         <form action={formAction} className="grid gap-6" noValidate onSubmit={handleSubmit}>
@@ -386,11 +431,15 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
           ) : null}
 
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <Button variant="outline" className="h-11 cursor-pointer px-6 font-bold" asChild>
-              <Link href="/my-listings">Повернутись назад</Link>
+            <Button type="button" variant="outline" className="h-11 cursor-pointer px-6 font-bold" onClick={handleCancel}>
+              Скасувати
             </Button>
-            <Button type="submit" className="h-11 cursor-pointer px-6 font-bold" disabled={isPending}>
-              {isPending ? "Створення..." : "Створити анкету"}
+            <Button
+              type="submit"
+              className="h-11 cursor-pointer px-6 font-bold"
+              disabled={isPending}
+            >
+              {isPending ? "Збереження..." : "Зберегти зміни"}
             </Button>
           </div>
         </form>

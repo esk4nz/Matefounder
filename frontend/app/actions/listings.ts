@@ -11,8 +11,11 @@ import { createListingFormSchema } from "../schemas/listings";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
+import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
 import type { ListingDetailsPayload, ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
+
+export type { UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
 
 export type CreateListingGuardState = {
   ok: boolean;
@@ -246,6 +249,7 @@ function parseTagSelections(tagIds: readonly number[], allTagRows: ReturnType<ty
 export async function guardCreateListingAction(
   _prevState: CreateListingGuardState | undefined,
 ): Promise<CreateListingGuardState> {
+  void _prevState;
   const profileReady = await assertProfileReadyForListing();
   if (!profileReady.ok) {
     return {
@@ -415,6 +419,254 @@ export async function createListingAction(
   }
 
   redirect("/my-listings");
+}
+
+export async function updateMyListingAction(
+  _prevState: UpdateMyListingActionState | undefined,
+  formData: FormData,
+): Promise<UpdateMyListingActionState> {
+  void _prevState;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Оновіть сторінку та увійдіть повторно." };
+  }
+
+  const listingId = String(formData.get("listingId") ?? "").trim();
+  const expectedUpdatedAt = String(formData.get("expectedUpdatedAt") ?? "").trim();
+  if (!listingId || !expectedUpdatedAt) {
+    return { ok: false, message: "Не вдалося підготувати редагування анкети. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const requiredTagIds = parseRequiredTagIds(formData.get("requiredTagIds"));
+  const keptImagePaths = (() => {
+    try {
+      const parsed = JSON.parse(String(formData.get("keptImagePaths") ?? "[]")) as unknown;
+      if (!Array.isArray(parsed)) {
+        return [] as string[];
+      }
+      return parsed.filter((row): row is string => typeof row === "string" && row.trim().length > 0);
+    } catch {
+      return [] as string[];
+    }
+  })();
+  const newImageFiles = formData
+    .getAll("images")
+    .filter((entry): entry is File => entry instanceof File && entry.size > 0);
+
+  if (keptImagePaths.length + newImageFiles.length === 0) {
+    return { ok: false, message: "Додайте щонайменше одне фото для анкети." };
+  }
+  if (keptImagePaths.length + newImageFiles.length > LISTING_MAX_PHOTOS) {
+    return { ok: false, message: `Можна завантажити до ${LISTING_MAX_PHOTOS} фото.` };
+  }
+  for (const file of newImageFiles) {
+    if (!isValidImageMimeType(file.type)) {
+      return { ok: false, message: "Підтримуються лише зображення JPG, PNG або WEBP." };
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      return { ok: false, message: "Розмір одного фото не має перевищувати 8 МБ." };
+    }
+  }
+
+  const { data: allTagRowsRaw, error: allTagsError } = await supabase
+    .from("tags")
+    .select(TAGS_WITH_CATEGORY_SELECT)
+    .order("category_id", { ascending: true })
+    .order("slug", { ascending: true });
+  const allTagRows = mapTagsQueryToProfileRows(allTagRowsRaw);
+  if (allTagsError || !allTagRows.length) {
+    return { ok: false, message: "Не вдалося завантажити довідник тегів." };
+  }
+
+  const parsedTagPayload = parseTagSelections(requiredTagIds, allTagRows);
+  const parsedListing = createListingFormSchema(allTagRows).safeParse({
+    type: String(formData.get("type") ?? ""),
+    title: String(formData.get("title") ?? ""),
+    cityId: String(formData.get("cityId") ?? ""),
+    description: String(formData.get("description") ?? ""),
+    address: String(formData.get("address") ?? ""),
+    price: Number(formData.get("price") ?? NaN),
+    availableFrom: String(formData.get("availableFrom") ?? ""),
+    availableUntil: String(formData.get("availableUntil") ?? ""),
+    tagSelections: parsedTagPayload.tagSelections,
+  });
+
+  if (!parsedListing.success) {
+    const first =
+      parsedListing.error.issues[0]?.message ??
+      "Перевірте поля анкети та спробуйте ще раз.";
+    return { ok: false, message: first };
+  }
+
+  const { data: listingRow, error: listingError } = await supabase
+    .from("listings")
+    .select("id, updated_at")
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (listingError) {
+    return { ok: false, message: "Не вдалося перевірити стан оголошення. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!listingRow) {
+    return {
+      ok: false,
+      reason: LISTING_FLASH_CODE.listingNotFound,
+    };
+  }
+
+  const { data: currentImageRows, error: currentImagesError } = await supabase
+    .from("listing_images")
+    .select("image_path, order_index")
+    .eq("listing_id", listingId)
+    .order("order_index", { ascending: true });
+  if (currentImagesError) {
+    return { ok: false, message: "Не вдалося завантажити поточні фото анкети." };
+  }
+  const currentImagePaths = (currentImageRows ?? [])
+    .map((row) => row.image_path)
+    .filter((path): path is string => typeof path === "string" && path.length > 0);
+  const currentPathSet = new Set(currentImagePaths);
+  if (keptImagePaths.some((path) => !currentPathSet.has(path))) {
+    return { ok: false, message: "Фото анкети застаріли. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const uploadedPaths: string[] = [];
+  for (const [index, file] of newImageFiles.entries()) {
+    const extension = getFileExtension(file.name);
+    const storagePath = `${user.id}/${listingId}/edit-${Date.now()}-${index + 1}-${randomUUID()}.${extension}`;
+    const { error: uploadError } = await supabase.storage.from("listing-images").upload(storagePath, file, {
+      upsert: false,
+      cacheControl: "3600",
+    });
+    if (uploadError) {
+      if (uploadedPaths.length > 0) {
+        await supabase.storage.from("listing-images").remove(uploadedPaths);
+      }
+      return { ok: false, message: "Не вдалося завантажити фото. Спробуйте ще раз." };
+    }
+    uploadedPaths.push(storagePath);
+  }
+
+  const finalImagePaths = [...keptImagePaths, ...uploadedPaths];
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("listings")
+    .update({
+      type: parsedListing.data.type,
+      city_id: parsedListing.data.cityId,
+      price: parsedListing.data.price,
+      title: parsedListing.data.title.trim(),
+      description: parsedListing.data.description.trim(),
+      address: parsedListing.data.address.length ? parsedListing.data.address : null,
+      available_from: parsedListing.data.availableFrom,
+      available_until: parsedListing.data.availableUntil || null,
+    })
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .eq("updated_at", expectedUpdatedAt)
+    .select("updated_at");
+  if (updateError) {
+    if (uploadedPaths.length > 0) {
+      await supabase.storage.from("listing-images").remove(uploadedPaths);
+    }
+    return { ok: false, message: "Не вдалося зберегти зміни анкети. Спробуйте ще раз." };
+  }
+  if (!updatedRows?.length) {
+    if (uploadedPaths.length > 0) {
+      await supabase.storage.from("listing-images").remove(uploadedPaths);
+    }
+    const { data: stillExists } = await supabase
+      .from("listings")
+      .select("id")
+      .eq("id", listingId)
+      .eq("creator_id", user.id)
+      .maybeSingle();
+    if (!stillExists) {
+      return {
+        ok: false,
+        reason: LISTING_FLASH_CODE.listingNotFound,
+      };
+    }
+    return { ok: false, message: "Дані застаріли. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const selectedListingTagIds = Object.values(parsedListing.data.tagSelections).filter(
+    (tagId): tagId is number => typeof tagId === "number",
+  );
+  const { error: clearTagsError } = await supabase
+    .from("listing_required_tags")
+    .delete()
+    .eq("listing_id", listingId);
+  if (clearTagsError) {
+    return { ok: false, message: "Не вдалося завершити оновлення анкети. Спробуйте ще раз." };
+  }
+  const { error: insertTagsError } = await supabase.from("listing_required_tags").insert(
+    selectedListingTagIds.map((tagId) => ({
+      listing_id: listingId,
+      tag_id: tagId,
+    })),
+  );
+  if (insertTagsError) {
+    return { ok: false, message: "Не вдалося завершити оновлення анкети. Спробуйте ще раз." };
+  }
+  const { error: clearImagesError } = await supabase
+    .from("listing_images")
+    .delete()
+    .eq("listing_id", listingId);
+  if (clearImagesError) {
+    return { ok: false, message: "Не вдалося завершити оновлення анкети. Спробуйте ще раз." };
+  }
+
+  const { error: insertImagesError } = await supabase.from("listing_images").insert(
+    finalImagePaths.map((imagePath, index) => ({
+      listing_id: listingId,
+      image_path: imagePath,
+      order_index: index,
+    })),
+  );
+  if (insertImagesError) {
+    return { ok: false, message: "Не вдалося зберегти порядок фото анкети. Спробуйте ще раз." };
+  }
+
+  const removedPaths = currentImagePaths.filter((path) => !keptImagePaths.includes(path));
+  if (removedPaths.length > 0) {
+    await supabase.storage.from("listing-images").remove(removedPaths);
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${listingId}/edit`);
+  return { ok: true };
+}
+
+export type CheckMyListingExistsResult =
+  | { ok: true }
+  | { ok: false; reason: "unauthenticated" | "not_found" };
+
+export async function checkMyListingExistsAction(listingId: string): Promise<CheckMyListingExistsResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+  const trimmed = listingId.trim();
+  if (!trimmed) {
+    return { ok: false, reason: "not_found" };
+  }
+  const { data } = await supabase
+    .from("listings")
+    .select("id")
+    .eq("id", trimmed)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+  if (!data) {
+    return { ok: false, reason: "not_found" };
+  }
+  return { ok: true };
 }
 
 export async function getMyListingFreshDataAction(
