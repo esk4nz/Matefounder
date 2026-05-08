@@ -13,21 +13,32 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 export type ListingPhotoItem = {
   id: string;
+  kind: "new";
   file: File;
   previewUrl: string;
 };
 
+export type ExistingListingPhotoItem = {
+  id: string;
+  kind: "existing";
+  imagePath: string;
+  previewUrl: string;
+};
+
+export type AnyListingPhotoItem = ListingPhotoItem | ExistingListingPhotoItem;
+
 function newPhotoItem(file: File): ListingPhotoItem {
   return {
     id: globalThis.crypto.randomUUID(),
+    kind: "new",
     file,
     previewUrl: URL.createObjectURL(file),
   };
 }
 
 type Props = {
-  items: ListingPhotoItem[];
-  onItemsChange: Dispatch<SetStateAction<ListingPhotoItem[]>>;
+  items: AnyListingPhotoItem[];
+  onItemsChange: Dispatch<SetStateAction<AnyListingPhotoItem[]>>;
   errorMessage: string | null;
 };
 
@@ -35,14 +46,19 @@ export function ListingPhotosPicker({ items, onItemsChange, errorMessage }: Prop
   const photoInputId = useId();
   const [inputResetKey, setInputResetKey] = useState(0);
   const itemsRef = useRef(items);
-  itemsRef.current = items;
   const [dragActive, setDragActive] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
 
   useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
     return () => {
       for (const row of itemsRef.current) {
-        URL.revokeObjectURL(row.previewUrl);
+        if (row.kind === "new") {
+          URL.revokeObjectURL(row.previewUrl);
+        }
       }
     };
   }, []);
@@ -104,7 +120,9 @@ export function ListingPhotosPicker({ items, onItemsChange, errorMessage }: Prop
         if (!row) {
           return prev;
         }
-        URL.revokeObjectURL(row.previewUrl);
+        if (row.kind === "new") {
+          URL.revokeObjectURL(row.previewUrl);
+        }
         return prev.filter((_, i) => i !== index);
       });
     },
@@ -228,8 +246,11 @@ export function ListingPhotosPicker({ items, onItemsChange, errorMessage }: Prop
               >
                 <img src={item.previewUrl} alt="" draggable={false} className="h-full w-full object-cover" />
               </div>
-              <p className="truncate px-2 py-1 text-[10px] font-medium text-slate-600" title={item.file.name}>
-                {item.file.name}
+              <p
+                className="truncate px-2 py-1 text-[10px] font-medium text-slate-600"
+                title={item.kind === "new" ? item.file.name : "Збережене фото"}
+              >
+                {item.kind === "new" ? item.file.name : "Збережене фото"}
               </p>
               <div className="flex items-center justify-between gap-1 border-t border-slate-100 px-1 py-1">
                 <Button

@@ -10,7 +10,6 @@ export type ListingDetailsTag = {
   labelUk: string;
 };
 
-/** По одному тегу на кожну з чотирьох ексклюзивних категорій (якщо є). */
 export type ListingDetailsExclusiveByCategory = Partial<
   Record<ProfileExclusiveTagCategory, ListingDetailsTag>
 >;
@@ -33,6 +32,5 @@ export type ListingDetailsPayload = {
   requiredByCategory: ListingDetailsExclusiveByCategory;
   authorByCategory: ListingDetailsExclusiveByCategory;
   authorInterests: ListingDetailsTag[];
-  /** Null when viewer cannot read authoritative review aggregates (or none exist). */
   reviewSummary: ListingDetailsReviewSummary | null;
 };

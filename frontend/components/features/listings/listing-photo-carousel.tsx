@@ -166,7 +166,6 @@ function PhotoLightbox({ urls, index, onClose, onNavigate }: PhotoLightboxProps)
               onClose();
             }}
           >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={url}
               alt=""
@@ -295,7 +294,6 @@ export const ListingPhotoCarousel = memo(function ListingPhotoCarousel({
                       syncPreviewToLightboxIndex(idx);
                     }}
                   >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={url}
                       alt=""

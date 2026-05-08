@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { ProfileTagRow, ProfileTagSelectionsExclusive } from "@/components/features/profile/profile-types";
 
-/** Теги на сервері змінилися (наприклад, адмін прибрав пункт із довідника). */
 export const PROFILE_TAG_CATALOG_CHANGED_MESSAGE =
   "Список доступних інтересів змінився. Будь ласка, оновіть сторінку, щоб побачити актуальний перелік.";
 

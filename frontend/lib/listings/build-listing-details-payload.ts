@@ -36,6 +36,7 @@ export type ListingDetailsQueryRow = {
   available_until: string | null;
   creator_id: string;
   is_active?: boolean;
+  updated_at: string;
   listing_images: { image_path: string; order_index: number }[] | null;
   cities:
     | {

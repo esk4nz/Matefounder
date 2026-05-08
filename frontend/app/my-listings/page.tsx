@@ -6,7 +6,7 @@ import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details
 import type { ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
 
-const LISTING_DETAIL_SELECT = `
+const LISTING_DETAILS_SELECT = `
   id,
   title,
   type,
@@ -17,6 +17,7 @@ const LISTING_DETAIL_SELECT = `
   available_until,
   creator_id,
   is_active,
+  updated_at,
   listing_images(image_path, order_index),
   cities(name, regions(name)),
   listing_required_tags(tags(id, slug, label_uk, category_id, tag_categories(name))),
@@ -40,7 +41,7 @@ export default async function MyListingsPage() {
   const [{ data: listingsRows }, { data: reviewRatings }] = await Promise.all([
     supabase
       .from("listings")
-      .select(LISTING_DETAIL_SELECT)
+      .select(LISTING_DETAILS_SELECT)
       .eq("creator_id", user.id)
       .order("updated_at", { ascending: false }),
     supabase.from("reviews").select("rating").eq("target_id", user.id),
@@ -67,6 +68,7 @@ export default async function MyListingsPage() {
       title: row.title,
       type: details.type,
       isActive: row.is_active,
+      updatedAt: row.updated_at,
       firstImageUrl,
       details,
     };
