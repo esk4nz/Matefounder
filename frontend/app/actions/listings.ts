@@ -7,7 +7,8 @@ import {
   PROFILE_EXCLUSIVE_CATEGORIES,
   type ProfileExclusiveTagCategory,
 } from "@/app/schemas/profile";
-import { createListingFormSchema } from "../schemas/listings";
+import { createListingFormSchema, publicListingsFiltersSchema } from "../schemas/listings";
+import type { ListingCardModel } from "@/lib/listings/listing-card-types";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
@@ -35,16 +36,12 @@ export type MyListingFreshDataActionResult =
   | {
       ok: true;
       details: ListingDetailsPayload;
-      card: {
-        id: string;
-        title: string;
-        type: "offering" | "searching";
-        isActive: boolean;
-        updatedAt: string;
-        firstImageUrl: string | null;
-        details: ListingDetailsPayload;
-      };
+      card: ListingCardModel;
     };
+
+export type PublicListingsActionResult =
+  | { ok: false; reason: "unauthenticated" | "invalidFilters"; message?: string }
+  | { ok: true; listings: ListingCardModel[]; total: number };
 
 export type UpdateMyListingStatusActionResult =
   | { ok: false; message: string }
@@ -706,6 +703,271 @@ export async function getMyListingFreshDataAction(
   }
 
   const row = listingRow as ListingDetailsQueryRow;
+  const details = buildListingDetailsPayload(row, {
+    supabase,
+    reviewSummary,
+  });
+
+  return {
+    ok: true,
+    details,
+    card: {
+      id: row.id,
+      title: row.title,
+      type: details.type,
+      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
+      updatedAt: row.updated_at,
+      firstImageUrl: details.imageUrls[0] ?? null,
+      details,
+    },
+  };
+}
+
+function intersectListingIdList(current: string[] | null, next: Set<string>): string[] {
+  if (current === null) {
+    return [...next];
+  }
+  return current.filter((id) => next.has(id));
+}
+
+async function fetchListingIdsForRequiredTag(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  tagId: number,
+): Promise<Set<string>> {
+  const { data, error } = await supabase.from("listing_required_tags").select("listing_id").eq("tag_id", tagId);
+  if (error) {
+    return new Set();
+  }
+  return new Set(
+    (data ?? []).map((row) => row.listing_id).filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
+}
+
+async function fetchCreatorIdsMatchingAuthorInterests(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  interestTagIds: number[],
+): Promise<string[]> {
+  if (interestTagIds.length === 0) {
+    return [];
+  }
+  const uniqueInterestIds = [...new Set(interestTagIds)];
+  const { data, error } = await supabase
+    .from("profile_tags")
+    .select("profile_id, tag_id")
+    .in("tag_id", uniqueInterestIds);
+  if (error || !data?.length) {
+    return [];
+  }
+  const byCreator = new Map<string, Set<number>>();
+  for (const row of data) {
+    if (typeof row.profile_id !== "string" || !row.profile_id) {
+      continue;
+    }
+    const set = byCreator.get(row.profile_id) ?? new Set();
+    if (typeof row.tag_id === "number") {
+      set.add(row.tag_id);
+    }
+    byCreator.set(row.profile_id, set);
+  }
+  const required = new Set(uniqueInterestIds);
+  const matched: string[] = [];
+  for (const [profileId, tagSet] of byCreator) {
+    let hasAll = true;
+    for (const tid of required) {
+      if (!tagSet.has(tid)) {
+        hasAll = false;
+        break;
+      }
+    }
+    if (hasAll) {
+      matched.push(profileId);
+    }
+  }
+  return matched;
+}
+
+export async function getPublicListingsAction(
+  rawFilters: unknown,
+): Promise<PublicListingsActionResult> {
+  const parsed = publicListingsFiltersSchema.safeParse(rawFilters ?? {});
+  if (!parsed.success) {
+    const first = parsed.error.issues[0]?.message ?? "Некоректні параметри фільтрації.";
+    return { ok: false, reason: "invalidFilters", message: first };
+  }
+
+  const filters = parsed.data;
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const { data: blockRows, error: blocksError } = await supabase
+    .from("user_blocks")
+    .select("blocked_id")
+    .eq("blocker_id", user.id);
+
+  if (blocksError) {
+    return { ok: false, reason: "invalidFilters", message: "Не вдалося застосувати обмеження профілю." };
+  }
+
+  const blockedIds = (blockRows ?? [])
+    .map((row) => row.blocked_id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+
+  let listingIdRestriction: string[] | null = null;
+  for (const category of PROFILE_EXCLUSIVE_CATEGORIES) {
+    const tagId = filters.requiredTags?.[category];
+    if (typeof tagId !== "number") {
+      continue;
+    }
+    const nextSet = await fetchListingIdsForRequiredTag(supabase, tagId);
+    listingIdRestriction = intersectListingIdList(listingIdRestriction, nextSet);
+    if (listingIdRestriction.length === 0) {
+      return { ok: true, listings: [], total: 0 };
+    }
+  }
+
+  const interestIds = filters.authorInterestTagIds ?? [];
+  let creatorIdRestriction: string[] | null = null;
+  if (interestIds.length > 0) {
+    const matchedCreators = await fetchCreatorIdsMatchingAuthorInterests(supabase, interestIds);
+    creatorIdRestriction = matchedCreators;
+    if (creatorIdRestriction.length === 0) {
+      return { ok: true, listings: [], total: 0 };
+    }
+  }
+
+  let query = supabase
+    .from("listings")
+    .select(LISTING_DETAILS_SELECT, { count: "exact" })
+    .eq("is_active", true);
+
+  if (filters.type) {
+    query = query.eq("type", filters.type);
+  }
+  if (filters.cityId) {
+    query = query.eq("city_id", filters.cityId);
+  } else if (filters.cityIds && filters.cityIds.length > 0) {
+    query = query.in("city_id", filters.cityIds);
+  }
+  if (typeof filters.priceMin === "number") {
+    query = query.gte("price", filters.priceMin);
+  }
+  if (typeof filters.priceMax === "number") {
+    query = query.lte("price", filters.priceMax);
+  }
+
+  for (const blockedId of blockedIds) {
+    query = query.neq("creator_id", blockedId);
+  }
+
+  if (creatorIdRestriction) {
+    query = query.in("creator_id", creatorIdRestriction);
+  }
+
+  if (listingIdRestriction) {
+    query = query.in("id", listingIdRestriction);
+  }
+
+  const { data: listingRows, error: listingsError, count } = await query
+    .order("updated_at", { ascending: false })
+    .range(0, 49);
+
+  if (listingsError) {
+    return { ok: false, reason: "invalidFilters", message: "Не вдалося завантажити оголошення. Спробуйте ще раз." };
+  }
+
+  const rows = listingRows ?? [];
+  const includesOwnListing = rows.some((row) => row.creator_id === user.id);
+
+  let ownReviewSummary: ListingDetailsReviewSummary | null = null;
+  if (includesOwnListing) {
+    const { data: reviewRatings } = await supabase.from("reviews").select("rating").eq("target_id", user.id);
+    const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
+    if (ratings.length > 0) {
+      const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
+      ownReviewSummary = {
+        averageOutOf10: avg5 * 2,
+        count: ratings.length,
+      };
+    }
+  }
+
+  const listings: ListingCardModel[] = rows.map((listingRow) => {
+    const row = listingRow as ListingDetailsQueryRow;
+    const reviewSummary = row.creator_id === user.id ? ownReviewSummary : null;
+    const details = buildListingDetailsPayload(row, {
+      supabase,
+      reviewSummary,
+    });
+    return {
+      id: row.id,
+      title: row.title,
+      type: details.type,
+      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
+      updatedAt: row.updated_at,
+      firstImageUrl: details.imageUrls[0] ?? null,
+      details,
+    };
+  });
+
+  return {
+    ok: true,
+    listings,
+    total: typeof count === "number" ? count : listings.length,
+  };
+}
+
+export async function getPublicListingFreshDataAction(
+  listingId: string,
+): Promise<MyListingFreshDataActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const { data: blockRows } = await supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id);
+  const blocked = new Set(
+    (blockRows ?? []).map((row) => row.blocked_id).filter((id): id is string => typeof id === "string"),
+  );
+
+  const { data: listingRow, error: listingError } = await supabase
+    .from("listings")
+    .select(LISTING_DETAILS_SELECT)
+    .eq("id", listingId.trim())
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (listingError || !listingRow) {
+    return { ok: false, reason: "notFound" };
+  }
+
+  const row = listingRow as ListingDetailsQueryRow;
+  if (blocked.has(row.creator_id)) {
+    return { ok: false, reason: "notFound" };
+  }
+
+  let reviewSummary: ListingDetailsReviewSummary | null = null;
+  if (row.creator_id === user.id) {
+    const { data: reviewRatings } = await supabase.from("reviews").select("rating").eq("target_id", user.id);
+    const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
+    if (ratings.length > 0) {
+      const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
+      reviewSummary = {
+        averageOutOf10: avg5 * 2,
+        count: ratings.length,
+      };
+    }
+  }
+
   const details = buildListingDetailsPayload(row, {
     supabase,
     reviewSummary,

@@ -10,6 +10,8 @@ import {
   updateMyListingStatusAction,
 } from "@/app/actions/listings";
 import type { ListingDetailsPayload } from "@/lib/listings/listing-details-types";
+import { ListingCard } from "@/components/features/listings/listing-card";
+import type { ListingCardModel } from "@/lib/listings/listing-card-types";
 import {
   getListingMyListingsFlashMessage,
   LISTING_MY_LISTINGS_FLASH_STORAGE_KEY,
@@ -35,24 +37,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-export type MyListingCardModel = {
-  id: string;
-  title: string;
-  type: "offering" | "searching";
-  isActive: boolean;
-  updatedAt: string;
-  firstImageUrl: string | null;
-  details: ListingDetailsPayload;
-};
+export type MyListingCardModel = ListingCardModel;
 
 type MyListingsViewProps = {
   userId: string;
   listings: MyListingCardModel[];
-};
-
-const TYPE_SUBLINE: Record<MyListingCardModel["type"], string> = {
-  offering: "Шукаю когось до себе у квартиру",
-  searching: "Шукаю, до кого можна заселитися",
 };
 
 export function MyListingsView({ userId, listings }: MyListingsViewProps) {
@@ -208,80 +197,46 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {listingCards.map((listing) => (
-            <article
+            <ListingCard
               key={listing.id}
-              className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-            >
-              <div className="aspect-[4/3] w-full bg-slate-100">
-                {listing.firstImageUrl ? (
-                  <img
-                    src={listing.firstImageUrl}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full items-center justify-center text-sm text-slate-500">
-                    Фото відсутнє
-                  </div>
-                )}
-              </div>
-              <div className="grid gap-3 p-4">
-                <div className="grid gap-1">
-                  <h2 className="line-clamp-2 text-base font-bold text-slate-900">{listing.title}</h2>
-                  <p className="text-sm text-slate-600">{TYPE_SUBLINE[listing.type]}</p>
-                  <span
-                    className={
-                      listing.isActive
-                        ? "inline-flex w-fit rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700"
-                        : "inline-flex w-fit rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600"
-                    }
-                  >
-                    {listing.isActive ? "Активне" : "Неактивне"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-2">
-                  <Button
-                    type="button"
-                    className="h-9 px-4"
-                    onClick={() => setOpenListingId(listing.id)}
-                  >
-                    Оглянути
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button type="button" variant="outline" size="icon" aria-label="Меню дій">
-                        <MoreHorizontal className="size-4" aria-hidden />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem asChild>
-                        <Link href={`/my-listings/${listing.id}/edit`}>Редагувати</Link>
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          void handleStatusToggle(listing);
-                        }}
-                        disabled={statusActionListingId === listing.id || isDeletePending}
-                      >
-                        {listing.isActive ? "Зробити неактивним" : "Зробити активним"}
-                      </DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
-                        onClick={() => {
-                          setDeleteServerError(null);
-                          setDeleteTargetListingId(listing.id);
-                        }}
-                        disabled={isDeletePending}
-                      >
-                        <Trash2 className="size-4" aria-hidden />
-                        Видалити
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
-            </article>
+              listing={listing}
+              onView={() => setOpenListingId(listing.id)}
+              showStatusBadge
+              trailingActions={
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="outline" size="icon" aria-label="Меню дій">
+                      <MoreHorizontal className="size-4" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem asChild>
+                      <Link href={`/my-listings/${listing.id}/edit`}>Редагувати</Link>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        void handleStatusToggle(listing);
+                      }}
+                      disabled={statusActionListingId === listing.id || isDeletePending}
+                    >
+                      {listing.isActive ? "Зробити неактивним" : "Зробити активним"}
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      className="text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
+                      onClick={() => {
+                        setDeleteServerError(null);
+                        setDeleteTargetListingId(listing.id);
+                      }}
+                      disabled={isDeletePending}
+                    >
+                      <Trash2 className="size-4" aria-hidden />
+                      Видалити
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              }
+            />
           ))}
         </div>
       )}

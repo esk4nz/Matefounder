@@ -99,3 +99,62 @@ export type ListingFormValues = z.input<ListingFormSchema>;
 
 export const LISTING_EXCLUSIVE_CATEGORIES = PROFILE_EXCLUSIVE_CATEGORIES;
 export type ListingExclusiveCategory = ProfileExclusiveTagCategory;
+
+const optionalNonNegativeInt = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+  return value;
+}, z.number().int().min(0).max(500000).optional());
+
+const publicListingRequiredFiltersSchema = z
+  .object({
+    habits: z.number().int().optional(),
+    routine: z.number().int().optional(),
+    social: z.number().int().optional(),
+    pets: z.number().int().optional(),
+  })
+  .optional();
+
+export const publicListingsFiltersSchema = z
+  .object({
+    type: z.enum(["offering", "searching"]).optional(),
+    cityId: z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim() ?? "";
+        return trimmed.length === 0 ? undefined : trimmed;
+      })
+      .pipe(z.string().uuid().optional()),
+    cityIds: z.array(z.string().uuid()).max(600).optional(),
+    priceMin: optionalNonNegativeInt,
+    priceMax: optionalNonNegativeInt,
+    requiredTags: publicListingRequiredFiltersSchema,
+    authorInterestTagIds: z.array(z.number().int()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.cityId && data.cityIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cityIds"],
+        message: "Оберіть або одне місто, або область без конкретного міста.",
+      });
+    }
+    if (
+      data.priceMin !== undefined &&
+      data.priceMax !== undefined &&
+      data.priceMin > data.priceMax
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["priceMax"],
+        message: "Верхня межа бюджету не може бути меншою за нижню.",
+      });
+    }
+  });
+
+export type PublicListingsFilters = z.infer<typeof publicListingsFiltersSchema>;
