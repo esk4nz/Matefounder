@@ -61,6 +61,17 @@ const EXCLUSIVE_CATEGORY_LABEL_UK: Record<ProfileExclusiveTagCategory, string> =
   pets: "Тварини",
 };
 
+const GENDER_LABELS = {
+  male: "Чоловік",
+  female: "Жінка",
+} as const;
+
+const GENDER_PREFERENCE_LABELS = {
+  male: "Хлопець/Чоловік",
+  female: "Дівчина/Жінка",
+  any: "Без різниці",
+} as const;
+
 function TagChip({ label }: { label: string }) {
   return (
     <span className="inline-flex max-w-full items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-medium text-slate-800">
@@ -244,6 +255,18 @@ export function ListingDetailsModal({
                   <div className="space-y-3">
                     <p className="text-sm font-semibold text-slate-900">Вимоги до сусіда</p>
                     <div className="space-y-3">
+                      <div>
+                        <p className="text-xs font-medium text-slate-500">Стать</p>
+                        <div className="mt-1">
+                          {loading ? (
+                            <SkeletonBlock className="h-6 w-28 rounded-full" />
+                          ) : listing ? (
+                            <TagChip label={GENDER_PREFERENCE_LABELS[listing.genderPreference]} />
+                          ) : (
+                            <span className="text-sm text-slate-500">—</span>
+                          )}
+                        </div>
+                      </div>
                       {PROFILE_EXCLUSIVE_CATEGORIES.map((cat) => {
                         const tag = listing?.requiredByCategory[cat];
                         return (
@@ -270,6 +293,18 @@ export function ListingDetailsModal({
                   <div className="space-y-3">
                     <p className="text-sm font-semibold text-slate-900">Про автора</p>
                     <div className="space-y-3">
+                      <div>
+                        <p className="text-xs font-medium text-slate-500">Стать</p>
+                        <div className="mt-1">
+                          {loading ? (
+                            <SkeletonBlock className="h-6 w-28 rounded-full" />
+                          ) : listing?.creatorGender ? (
+                            <TagChip label={GENDER_LABELS[listing.creatorGender]} />
+                          ) : (
+                            <span className="text-sm text-slate-500">—</span>
+                          )}
+                        </div>
+                      </div>
                       {PROFILE_EXCLUSIVE_CATEGORIES.map((cat) => {
                         const tag = listing?.authorByCategory[cat];
                         return (

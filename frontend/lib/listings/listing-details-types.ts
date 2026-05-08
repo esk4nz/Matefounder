@@ -1,4 +1,5 @@
 import type { ProfileExclusiveTagCategory } from "@/app/schemas/profile";
+import type { ListingGenderPreference } from "@/app/schemas/listings";
 
 export type ListingDetailsReviewSummary = {
   averageOutOf10: number;
@@ -18,6 +19,7 @@ export type ListingDetailsPayload = {
   id: string;
   title: string;
   type: "offering" | "searching";
+  genderPreference: ListingGenderPreference;
   description: string;
   price: number;
   address: string | null;
@@ -26,6 +28,7 @@ export type ListingDetailsPayload = {
   creatorId: string;
   creatorFirstName: string;
   creatorLastName: string;
+  creatorGender: "male" | "female" | null;
   cityName: string;
   regionName: string;
   imageUrls: string[];

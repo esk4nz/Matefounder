@@ -17,7 +17,6 @@ import { ListingDetailsModal } from "@/components/features/listings/listing-deta
 import { getListingTagDisplayLabel } from "@/lib/listings/listing-tag-display-labels";
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
 import type { ListingDetailsPayload } from "@/lib/listings/listing-details-types";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -39,6 +38,7 @@ const TYPE_FILTER_OPTIONS = [
   { value: "offering", label: "Шукаю сусіда" },
   { value: "searching", label: "Шукаю житло" },
 ] as const;
+const MAX_LISTING_PRICE = 500000;
 
 type ListingsViewProps = {
   userId: string;
@@ -59,6 +59,18 @@ function parseBudgetInput(raw: string): number | undefined {
     return undefined;
   }
   return n;
+}
+
+function normalizeIntegerInput(value: string): string {
+  const digits = value.replace(/[^\d]/g, "");
+  if (!digits) {
+    return "";
+  }
+  const asNumber = Number.parseInt(digits, 10);
+  if (!Number.isFinite(asNumber)) {
+    return "";
+  }
+  return String(Math.min(asNumber, MAX_LISTING_PRICE));
 }
 
 function buildFiltersPayload(args: {
@@ -184,6 +196,15 @@ export function ListingsView({
   }, [authorInterestIds, cities, cityId, priceMax, priceMin, regionId, requiredTags, typeFilter]);
 
   useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      applyFilters();
+    }, 250);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [applyFilters]);
+
+  useEffect(() => {
     if (!openListingId) {
       setActiveListingDetails(null);
       setIsDetailsLoading(false);
@@ -237,6 +258,34 @@ export function ListingsView({
 
   const toggleAuthorInterest = (tagId: number) => {
     setAuthorInterestIds((prev) => (prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]));
+  };
+
+  const handleBudgetMinChange = (nextRaw: string) => {
+    const next = normalizeIntegerInput(nextRaw);
+    const maxValue = parseBudgetInput(priceMax);
+    const minValue = parseBudgetInput(next);
+    if (
+      typeof minValue === "number" &&
+      typeof maxValue === "number" &&
+      minValue > maxValue
+    ) {
+      setPriceMax(String(minValue));
+    }
+    setPriceMin(next);
+  };
+
+  const handleBudgetMaxChange = (nextRaw: string) => {
+    const next = normalizeIntegerInput(nextRaw);
+    const maxValue = parseBudgetInput(next);
+    const minValue = parseBudgetInput(priceMin);
+    if (
+      typeof minValue === "number" &&
+      typeof maxValue === "number" &&
+      minValue > maxValue
+    ) {
+      setPriceMin(String(maxValue));
+    }
+    setPriceMax(next);
   };
 
   return (
@@ -324,8 +373,9 @@ export function ListingsView({
                     id="price-min"
                     className="h-11"
                     inputMode="numeric"
+                    pattern="[0-9]*"
                     value={priceMin}
-                    onChange={(e) => setPriceMin(e.target.value)}
+                    onChange={(e) => handleBudgetMinChange(e.target.value)}
                     placeholder="0"
                   />
                 </div>
@@ -337,49 +387,67 @@ export function ListingsView({
                     id="price-max"
                     className="h-11"
                     inputMode="numeric"
+                    pattern="[0-9]*"
                     value={priceMax}
-                    onChange={(e) => setPriceMax(e.target.value)}
-                    placeholder="Без обмежень"
+                    onChange={(e) => handleBudgetMaxChange(e.target.value)}
+                    placeholder={String(MAX_LISTING_PRICE)}
                   />
                 </div>
+              </div>
+              <div className="grid gap-2 pt-1">
+                <input
+                  type="range"
+                  min={0}
+                  max={MAX_LISTING_PRICE}
+                  step={100}
+                  value={parseBudgetInput(priceMin) ?? 0}
+                  onChange={(e) => handleBudgetMinChange(e.target.value)}
+                  className="w-full accent-blue-600"
+                  aria-label="Мінімальна ціна"
+                />
+                <input
+                  type="range"
+                  min={0}
+                  max={MAX_LISTING_PRICE}
+                  step={100}
+                  value={parseBudgetInput(priceMax) ?? MAX_LISTING_PRICE}
+                  onChange={(e) => handleBudgetMaxChange(e.target.value)}
+                  className="w-full accent-blue-600"
+                  aria-label="Максимальна ціна"
+                />
               </div>
             </div>
 
             <div className="grid gap-3">
-              <p className="text-sm font-semibold text-slate-900">Очікування до анкети</p>
-              <p className="text-xs text-slate-500">
-                Оберіть бажані значення з анкети оголошення (звички, ритм дня, гості, тварини).
-              </p>
+              <p className="text-sm font-semibold text-slate-900">Що ви очікуєте від вашого нового сусіда?</p>
               {PROFILE_EXCLUSIVE_CATEGORIES.map((category) => (
                 <div key={category} className="grid gap-2">
-                  <Label htmlFor={`req-${category}`} className="text-slate-700">
-                    {EXCLUSIVE_LABELS[category]}
-                  </Label>
-                  <Select
-                    id={`req-${category}`}
-                    className="h-11"
-                    value={requiredTags[category] === undefined || requiredTags[category] === "" ? "" : String(requiredTags[category])}
-                    onChange={(event) => {
-                      const v = event.target.value;
-                      setRequiredTags((prev) => {
-                        if (v === "") {
-                          return { ...prev, [category]: "" };
-                        }
-                        const parsed = Number.parseInt(v, 10);
-                        return {
-                          ...prev,
-                          [category]: Number.isFinite(parsed) ? parsed : "",
-                        };
-                      });
-                    }}
-                  >
-                    <option value="">Будь-який варіант</option>
-                    {(tagsByCategory.get(category) ?? []).map((tag) => (
-                      <option key={tag.id} value={String(tag.id)}>
-                        {getListingTagDisplayLabel(tag.slug, tag.label_uk)}
-                      </option>
-                    ))}
-                  </Select>
+                  <Label className="text-slate-700">{EXCLUSIVE_LABELS[category]}</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(tagsByCategory.get(category) ?? []).map((tag) => {
+                      const selected = requiredTags[category] === tag.id;
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          onClick={() => {
+                            setRequiredTags((prev) => ({
+                              ...prev,
+                              [category]: selected ? "" : tag.id,
+                            }));
+                          }}
+                          className={cn(
+                            "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                            selected
+                              ? "border-blue-300 bg-blue-50 text-blue-900"
+                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                          )}
+                        >
+                          {getListingTagDisplayLabel(tag.slug, tag.label_uk)}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
             </div>
@@ -415,9 +483,7 @@ export function ListingsView({
               </ScrollArea>
             </div>
 
-            <Button type="button" className="h-11 w-full" disabled={isPending} onClick={() => applyFilters()}>
-              {isPending ? "Оновлення…" : "Показати оголошення"}
-            </Button>
+            {isPending ? <p className="text-xs text-slate-500">Оновлення списку…</p> : null}
           </div>
         </aside>
 

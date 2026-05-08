@@ -55,6 +55,7 @@ const LISTING_DETAILS_SELECT = `
   id,
   title,
   type,
+  gender_preference,
   description,
   price,
   address,
@@ -69,6 +70,7 @@ const LISTING_DETAILS_SELECT = `
   profiles!listings_creator_id_fkey(
     first_name,
     last_name,
+    gender,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   )
 `;
@@ -322,6 +324,7 @@ export async function createListingAction(
     type: String(formData.get("type") ?? ""),
     title: String(formData.get("title") ?? ""),
     cityId: String(formData.get("cityId") ?? ""),
+    genderPreference: String(formData.get("genderPreference") ?? ""),
     description: String(formData.get("description") ?? ""),
     address: String(formData.get("address") ?? ""),
     price: Number(formData.get("price") ?? NaN),
@@ -346,6 +349,7 @@ export async function createListingAction(
       creator_id: profileReady.userId,
       type: parsedListing.data.type,
       city_id: parsedListing.data.cityId,
+      gender_preference: parsedListing.data.genderPreference,
       price: parsedListing.data.price,
       title: parsedListing.data.title.trim(),
       description: parsedListing.data.description.trim(),
@@ -484,6 +488,7 @@ export async function updateMyListingAction(
     type: String(formData.get("type") ?? ""),
     title: String(formData.get("title") ?? ""),
     cityId: String(formData.get("cityId") ?? ""),
+    genderPreference: String(formData.get("genderPreference") ?? ""),
     description: String(formData.get("description") ?? ""),
     address: String(formData.get("address") ?? ""),
     price: Number(formData.get("price") ?? NaN),
@@ -554,6 +559,7 @@ export async function updateMyListingAction(
     .update({
       type: parsedListing.data.type,
       city_id: parsedListing.data.cityId,
+      gender_preference: parsedListing.data.genderPreference,
       price: parsedListing.data.price,
       title: parsedListing.data.title.trim(),
       description: parsedListing.data.description.trim(),
@@ -723,24 +729,59 @@ export async function getMyListingFreshDataAction(
   };
 }
 
-function intersectListingIdList(current: string[] | null, next: Set<string>): string[] {
+function intersectIdList(current: string[] | null, next: Set<string>): string[] {
   if (current === null) {
     return [...next];
   }
   return current.filter((id) => next.has(id));
 }
 
-async function fetchListingIdsForRequiredTag(
+async function fetchCreatorIdsMatchingRequiredProfileTags(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  tagId: number,
+  requiredTags: Partial<Record<ProfileExclusiveTagCategory, number>> | undefined,
 ): Promise<Set<string>> {
-  const { data, error } = await supabase.from("listing_required_tags").select("listing_id").eq("tag_id", tagId);
-  if (error) {
+  const selected = Object.values(requiredTags ?? {}).filter((tagId): tagId is number => typeof tagId === "number");
+  if (selected.length === 0) {
     return new Set();
   }
-  return new Set(
-    (data ?? []).map((row) => row.listing_id).filter((id): id is string => typeof id === "string" && id.length > 0),
-  );
+
+  const uniqueTagIds = [...new Set(selected)];
+  const { data, error } = await supabase
+    .from("profile_tags")
+    .select("profile_id, tag_id")
+    .in("tag_id", uniqueTagIds);
+  if (error || !data?.length) {
+    return new Set();
+  }
+
+  const byCreator = new Map<string, Set<number>>();
+  for (const row of data) {
+    if (typeof row.profile_id !== "string" || !row.profile_id) {
+      continue;
+    }
+    const set = byCreator.get(row.profile_id) ?? new Set();
+    if (typeof row.tag_id === "number") {
+      set.add(row.tag_id);
+    }
+    byCreator.set(row.profile_id, set);
+  }
+
+  const requiredSet = new Set(uniqueTagIds);
+  const matched = new Set<string>();
+  for (const [profileId, tagSet] of byCreator) {
+    let hasAll = true;
+    for (const tagId of requiredSet) {
+      if (!tagSet.has(tagId)) {
+        hasAll = false;
+        break;
+      }
+    }
+    if (hasAll) {
+      matched.add(profileId);
+    }
+  }
+
+  return matched;
 }
 
 async function fetchCreatorIdsMatchingAuthorInterests(
@@ -818,24 +859,21 @@ export async function getPublicListingsAction(
     .map((row) => row.blocked_id)
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 
-  let listingIdRestriction: string[] | null = null;
-  for (const category of PROFILE_EXCLUSIVE_CATEGORIES) {
-    const tagId = filters.requiredTags?.[category];
-    if (typeof tagId !== "number") {
-      continue;
-    }
-    const nextSet = await fetchListingIdsForRequiredTag(supabase, tagId);
-    listingIdRestriction = intersectListingIdList(listingIdRestriction, nextSet);
-    if (listingIdRestriction.length === 0) {
-      return { ok: true, listings: [], total: 0 };
-    }
+  let creatorIdRestriction: string[] | null = null;
+  const requiredProfileTagCreators = await fetchCreatorIdsMatchingRequiredProfileTags(
+    supabase,
+    filters.requiredTags,
+  );
+  if (requiredProfileTagCreators.size > 0) {
+    creatorIdRestriction = intersectIdList(creatorIdRestriction, requiredProfileTagCreators);
+  } else if (Object.values(filters.requiredTags ?? {}).some((value) => typeof value === "number")) {
+    return { ok: true, listings: [], total: 0 };
   }
 
   const interestIds = filters.authorInterestTagIds ?? [];
-  let creatorIdRestriction: string[] | null = null;
   if (interestIds.length > 0) {
     const matchedCreators = await fetchCreatorIdsMatchingAuthorInterests(supabase, interestIds);
-    creatorIdRestriction = matchedCreators;
+    creatorIdRestriction = intersectIdList(creatorIdRestriction, new Set(matchedCreators));
     if (creatorIdRestriction.length === 0) {
       return { ok: true, listings: [], total: 0 };
     }
@@ -867,10 +905,6 @@ export async function getPublicListingsAction(
 
   if (creatorIdRestriction) {
     query = query.in("creator_id", creatorIdRestriction);
-  }
-
-  if (listingIdRestriction) {
-    query = query.in("id", listingIdRestriction);
   }
 
   const { data: listingRows, error: listingsError, count } = await query

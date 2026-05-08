@@ -5,6 +5,9 @@ import {
 } from "@/app/schemas/profile";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 
+export const LISTING_GENDER_PREFERENCE_VALUES = ["male", "female", "any"] as const;
+export type ListingGenderPreference = (typeof LISTING_GENDER_PREFERENCE_VALUES)[number];
+
 const listingTypeValues = ["offering", "searching"] as const;
 
 const SECTION_VALIDATION_LABELS: Record<string, string> = {
@@ -37,6 +40,9 @@ export function createListingFormSchema(allTags: readonly ProfileTagRow[]) {
         .min(4, "Назва надто коротка — потрібно щонайменше 4 символи.")
         .max(120, "Назва занадто довга — максимум 120 символів."),
       cityId: z.string().uuid("Оберіть місто."),
+      genderPreference: z.enum(LISTING_GENDER_PREFERENCE_VALUES, {
+        message: "Оберіть, кого ви шукаєте.",
+      }),
       description: z
         .string()
         .trim()

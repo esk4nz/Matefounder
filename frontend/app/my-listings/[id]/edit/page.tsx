@@ -31,7 +31,7 @@ export default async function EditMyListingPage({ params }: Props) {
         .order("slug", { ascending: true }),
       supabase
         .from("listings")
-        .select("id, updated_at, type, title, city_id, description, address, price, available_from, available_until")
+        .select("id, updated_at, type, title, city_id, gender_preference, description, address, price, available_from, available_until")
         .eq("id", id)
         .eq("creator_id", user.id)
         .maybeSingle(),
@@ -84,6 +84,7 @@ export default async function EditMyListingPage({ params }: Props) {
     type: listing.type === "searching" ? "searching" : "offering",
     title: listing.title ?? "",
     cityId: listing.city_id ?? "",
+    genderPreference: listing.gender_preference === "male" || listing.gender_preference === "female" ? listing.gender_preference : "any",
     description: listing.description ?? "",
     address: listing.address ?? "",
     price: typeof listing.price === "number" ? listing.price : 0,
