@@ -1,7 +1,7 @@
 import type { ProfileMessage } from "@/app/actions/profile";
 
 export function ActionMessage({ state }: { state: ProfileMessage | undefined }) {
-  if (!state?.message) {
+  if (!state?.message || state.reason === "stale_auth_session") {
     return null;
   }
 

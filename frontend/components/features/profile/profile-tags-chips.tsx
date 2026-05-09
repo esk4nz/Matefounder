@@ -100,7 +100,7 @@ export function ProfileTagsChips({ form, allTags }: Props) {
           <div key={category} className="grid gap-2">
             <Label className={errors.tagInterests ? "text-red-500" : "text-slate-700"}>
               {title}
-              <span className="ml-1 font-normal text-slate-500">(можна кілька)</span>
+              <span className="ml-1 font-normal text-slate-500">(можна кілька, опціонально)</span>
             </Label>
             <Controller
               control={form.control}

@@ -195,6 +195,58 @@ export function ProfileDetailsCard({
             <FieldError message={errors.username?.message} />
           </div>
 
+          <div className="grid gap-1">
+            <Label
+              htmlFor="contactPhone"
+              className={errors.contactPhone ? "text-red-500" : "text-slate-700"}
+            >
+              Номер телефону
+            </Label>
+            <Controller
+              control={form.control}
+              name="contactPhone"
+              render={({ field }) => (
+                <Input
+                  {...field}
+                  value={field.value ?? ""}
+                  id="contactPhone"
+                  autoComplete="tel"
+                  placeholder="+380XXXXXXXXX"
+                  className={errors.contactPhone ? "border-red-500 focus-visible:ring-red-500" : ""}
+                />
+              )}
+            />
+            <p className="text-xs text-slate-500">
+              Ваш номер побачать лише ті користувачі, чий запит на співпроживання ви схвалите.
+            </p>
+            <FieldError message={errors.contactPhone?.message} />
+          </div>
+
+          <div className="grid gap-1">
+            <Label
+              htmlFor="contactTelegram"
+              className={errors.contactTelegram ? "text-red-500" : "text-slate-700"}
+            >
+              Telegram (опціонально)
+            </Label>
+            <Controller
+              control={form.control}
+              name="contactTelegram"
+              render={({ field }) => (
+                <Input
+                  {...field}
+                  value={field.value ?? ""}
+                  id="contactTelegram"
+                  autoComplete="off"
+                  placeholder="@username"
+                  className={errors.contactTelegram ? "border-red-500 focus-visible:ring-red-500" : ""}
+                />
+              )}
+            />
+            <p className="text-xs text-slate-500">Наприклад: @username</p>
+            <FieldError message={errors.contactTelegram?.message} />
+          </div>
+
           <div className="grid gap-2">
             <Label
               id="gender-label"

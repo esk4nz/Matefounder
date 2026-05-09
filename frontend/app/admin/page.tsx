@@ -1,5 +1,5 @@
-import { listAdminUsersAction } from "@/app/actions/admin"
-import { AdminGeographyTab } from "@/components/features/admin/admin-geography-tab"
+import { listAdminUsersAction, listInterestTagsAction } from "@/app/actions/admin"
+import { AdminTagsTab } from "@/components/features/admin/admin-tags-tab"
 import { AdminUsersTab } from "@/components/features/admin/admin-users-tab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createClient } from "@/lib/supabase/server"
@@ -17,17 +17,21 @@ export default async function AdminConsolePage() {
   const initialHasMore = usersResult.ok ? usersResult.hasMore : false
   const initialUsersError = usersResult.ok ? null : usersResult.message
 
+  const tagsResult = await listInterestTagsAction()
+  const initialTags = tagsResult.ok ? tagsResult.tags : []
+  const initialTagsError = tagsResult.ok ? null : tagsResult.message
+
   return (
     <section className="container mx-auto max-w-4xl px-6 py-12">
       <h1 className="text-3xl font-black text-slate-900">Консоль адміністрування</h1>
       <p className="mt-3 text-slate-600">
-        Керування користувачами, доступом та локаціями платформи.
+        Керування користувачами, доступом та довідником інтересів.
       </p>
 
       <Tabs defaultValue="users" className="mt-8 w-full">
         <TabsList aria-label="Розділи консолі">
           <TabsTrigger value="users">Користувачі</TabsTrigger>
-          <TabsTrigger value="geography">Географія</TabsTrigger>
+          <TabsTrigger value="interests">Інтереси</TabsTrigger>
         </TabsList>
         <TabsContent value="users">
           <AdminUsersTab
@@ -37,8 +41,8 @@ export default async function AdminConsolePage() {
             initialListError={initialUsersError}
           />
         </TabsContent>
-        <TabsContent value="geography">
-          <AdminGeographyTab />
+        <TabsContent value="interests">
+          <AdminTagsTab initialTags={initialTags} initialListError={initialTagsError} />
         </TabsContent>
       </Tabs>
     </section>
