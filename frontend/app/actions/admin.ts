@@ -149,11 +149,31 @@ export async function setUserBlockedAction(
 export async function grantAdminRoleAction(
   targetUserId: string,
   expectedUpdatedAt: string,
+  adminPassword: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const { userId } = await requireAdminOrRedirect();
 
   if (targetUserId === userId) {
     return { ok: false, message: "Ця дія недоступна для власного облікового запису." };
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error: authUserError,
+  } = await supabase.auth.getUser();
+
+  if (authUserError || !user?.email) {
+    return { ok: false, message: "Не вдалося ідентифікувати адміністратора." };
+  }
+
+  const { error: signInError } = await supabase.auth.signInWithPassword({
+    email: user.email,
+    password: adminPassword,
+  });
+
+  if (signInError) {
+    return { ok: false, message: "Невірний пароль." };
   }
 
   const admin = createServiceRoleClient();
