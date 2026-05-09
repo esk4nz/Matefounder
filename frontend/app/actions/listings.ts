@@ -885,6 +885,8 @@ export async function getPublicListingsAction(
     query = query.neq("creator_id", blockedId);
   }
 
+  query = query.neq("creator_id", user.id);
+
   if (creatorIdRestriction) {
     query = query.in("creator_id", creatorIdRestriction);
   }
@@ -898,29 +900,14 @@ export async function getPublicListingsAction(
   }
 
   const rows = listingRows ?? [];
-  const includesOwnListing = rows.some((row) => row.creator_id === user.id);
-
-  let ownReviewSummary: ListingDetailsReviewSummary | null = null;
-  if (includesOwnListing) {
-    const { data: reviewRatings } = await supabase.from("reviews").select("rating").eq("target_id", user.id);
-    const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
-    if (ratings.length > 0) {
-      const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
-      ownReviewSummary = {
-        averageOutOf10: avg5 * 2,
-        count: ratings.length,
-      };
-    }
-  }
 
   const listings: ListingCardModel[] = rows.map((listingRow) => {
     const row = listingRow as ListingDetailsQueryRow;
-    const reviewSummary = row.creator_id === user.id ? ownReviewSummary : null;
     const detailsBase = buildListingDetailsPayload(row, {
       supabase,
-      reviewSummary,
+      reviewSummary: null,
     });
-    const similarityScore = row.creator_id !== user.id ? 100 : undefined;
+    const similarityScore = 100;
     const details = { ...detailsBase, similarityScore };
     return {
       id: row.id,
