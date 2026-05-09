@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type { ProfileTagRow, ProfileTagSelectionsExclusive } from "@/components/features/profile/profile-types";
 
-/** Теги на сервері змінилися (наприклад, адмін прибрав пункт із довідника). */
 export const PROFILE_TAG_CATALOG_CHANGED_MESSAGE =
   "Список доступних інтересів змінився. Будь ласка, оновіть сторінку, щоб побачити актуальний перелік.";
 
@@ -11,6 +10,7 @@ export const PROFILE_INTERESTS_CATEGORY = "interests" as const;
 
 const profileGenderValues = ["male", "female"] as const;
 const profileGenderInputValues = ["", "male", "female"] as const;
+const ukrainianPhoneRegex = /^\+380\d{9}$/;
 
 const emptyExclusiveSelections = (): ProfileTagSelectionsExclusive => ({
   habits: null,
@@ -127,6 +127,52 @@ export function createProfileFormSchema(allTags: readonly ProfileTagRow[]) {
         .max(1000, "Максимум 1000 символів")
         .optional()
         .transform((value) => value?.trim() ?? ""),
+      contactPhone: z
+        .string()
+        .trim()
+        .min(1, "Вкажіть номер телефону")
+        .regex(ukrainianPhoneRegex, "Введіть номер у форматі +380XXXXXXXXX"),
+      contactTelegram: z
+        .string()
+        .optional()
+        .transform((value) => value?.trim() ?? "")
+        .superRefine((value, ctx) => {
+          if (value.length === 0) {
+            return;
+          }
+
+          if (!value.startsWith("@")) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Telegram має починатися з @.",
+            });
+            return;
+          }
+
+          const handle = value.slice(1);
+          if (handle.length < 5) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Username у Telegram має містити щонайменше 5 символів після @.",
+            });
+            return;
+          }
+
+          if (handle.length > 32) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Username у Telegram має містити не більше 32 символів.",
+            });
+            return;
+          }
+
+          if (!/^[a-zA-Z0-9_]+$/.test(handle)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: "Username у Telegram може містити лише латинські літери, цифри та _.",
+            });
+          }
+        }),
       tagSelections: tagSelectionsSchema,
       tagInterests: z.array(z.number().int()),
     })

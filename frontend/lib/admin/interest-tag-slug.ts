@@ -48,7 +48,6 @@ function transliterateChar(ch: string): string {
   return "";
 }
 
-/** Готує базовий slug int_* з української назви (унікальність перевіряється окремо). */
 export function buildInterestSlugFromLabel(labelUk: string): string {
   const stripped = labelUk
     .trim()

@@ -25,13 +25,24 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
-  reason?: "unauthenticated" | "missingProfile" | "adminAccount";
+  reason?: "unauthenticated" | "stale_auth_session" | "missingProfile" | "adminAccount";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
     selectedTagIds: number[];
     updatedAt: string;
   };
 };
+
+const STALE_AUTH_SESSION_MESSAGE =
+  "Ваша сесія застаріла. Будь ласка, спробуйте увійти знову.";
+
+function staleAuthSessionResponse(): ProfileMessage {
+  return {
+    ok: false,
+    message: STALE_AUTH_SESSION_MESSAGE,
+    reason: "stale_auth_session",
+  };
+}
 
 const PROFILE_STALE_VERSION_MESSAGE =
   "Дані застаріли. Будь ласка, оновіть сторінку, щоб побачити актуальні зміни.";
@@ -74,10 +85,11 @@ export async function updateProfileAction(
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
+  if (authError || !user) {
+    return staleAuthSessionResponse();
   }
 
   const expectedUpdatedAt = String(formData.get("expectedUpdatedAt") ?? "").trim();
@@ -126,6 +138,8 @@ export async function updateProfileAction(
     username: String(formData.get("username") ?? ""),
     gender: String(formData.get("gender") ?? ""),
     bio: String(formData.get("bio") ?? ""),
+    contactPhone: String(formData.get("contactPhone") ?? ""),
+    contactTelegram: String(formData.get("contactTelegram") ?? ""),
     tagSelections: expanded.tagSelections,
     tagInterests: expanded.tagInterests,
   });
@@ -185,6 +199,8 @@ export async function updateProfileAction(
       last_name: parsed.data.lastName.trim(),
       bio: parsed.data.bio,
       gender: parsed.data.gender,
+      contact_phone: parsed.data.contactPhone,
+      contact_telegram: parsed.data.contactTelegram || null,
       avatar_path: nextAvatarPath,
     })
     .eq("id", user.id)
@@ -237,6 +253,8 @@ export async function updateProfileAction(
       lastName: parsed.data.lastName.trim(),
       gender: parsed.data.gender,
       bio: parsed.data.bio,
+      contactPhone: parsed.data.contactPhone,
+      contactTelegram: parsed.data.contactTelegram,
       tagSelections: parsed.data.tagSelections,
       tagInterests: parsed.data.tagInterests,
       avatarUrl,
@@ -253,10 +271,11 @@ export async function updatePasswordAction(
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
+  if (authError || !user) {
+    return staleAuthSessionResponse();
   }
 
   const { data: currentProfile, error: profileError } = await supabase
@@ -345,10 +364,11 @@ export async function deleteAccountAction(
   const supabase = await createClient();
   const {
     data: { user },
+    error: authError,
   } = await supabase.auth.getUser();
 
-  if (!user) {
-    return { ok: false, message: "Сесію завершено. Увійдіть ще раз.", reason: "unauthenticated" };
+  if (authError || !user) {
+    return staleAuthSessionResponse();
   }
 
   const admin = createServiceRoleClient();

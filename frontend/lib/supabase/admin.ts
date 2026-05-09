@@ -1,7 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { getSupabaseUrl } from "./config";
 
-/** Лише на сервері: пошук профілю за логіном без публічного RPC. */
 export function createServiceRoleClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!key) {

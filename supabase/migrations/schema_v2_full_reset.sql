@@ -15,6 +15,7 @@ drop table if exists public.reviews cascade;
 drop table if exists public.chat_messages cascade;
 drop table if exists public.chat_participants cascade;
 drop table if exists public.chat_rooms cascade;
+drop table if exists public.listing_required_tags cascade;
 drop table if exists public.listing_images cascade;
 drop table if exists public.listings cascade;
 drop table if exists public.profile_tags cascade;
@@ -55,6 +56,8 @@ create table public.profiles (
   last_name text not null,
   avatar_path text,
   bio text,
+  contact_phone text,
+  contact_telegram text,
   gender text,
   embedding vector(768),
   is_blocked boolean not null default false,
@@ -95,20 +98,23 @@ create table public.profile_tags (
 create index if not exists profile_tags_tag_id_idx on public.profile_tags (tag_id);
 create index if not exists tags_category_id_idx on public.tags (category_id);
 
--- listings, listing_images
+-- listings, listing_images, listing_required_tags
 create table public.listings (
   id uuid primary key default gen_random_uuid(),
   creator_id uuid not null references public.profiles (id) on delete cascade,
   type text not null,
+  gender_preference text not null default 'any',
   city_id uuid not null references public.cities (id) on delete restrict,
   price integer not null check (price >= 0),
   title text not null,
   description text not null,
+  address text,
   available_from date not null,
   available_until date,
   is_active boolean not null default true,
   updated_at timestamptz not null default now(),
   constraint listings_type_chk check (type in ('searching', 'offering')),
+  constraint listings_gender_preference_chk check (gender_preference in ('male', 'female', 'any')),
   constraint listings_dates_chk check (
     available_until is null or available_until >= available_from
   )
@@ -129,6 +135,15 @@ create table public.listing_images (
 
 create index if not exists listing_images_listing_order_idx
   on public.listing_images (listing_id, order_index);
+
+create table public.listing_required_tags (
+  listing_id uuid not null references public.listings (id) on delete cascade,
+  tag_id integer not null references public.tags (id) on delete restrict,
+  primary key (listing_id, tag_id)
+);
+
+create index if not exists listing_required_tags_tag_id_idx
+  on public.listing_required_tags (tag_id);
 
 -- chat_rooms, chat_participants, chat_messages
 create table public.chat_rooms (
@@ -410,6 +425,7 @@ alter table public.tags enable row level security;
 alter table public.profile_tags enable row level security;
 alter table public.listings enable row level security;
 alter table public.listing_images enable row level security;
+alter table public.listing_required_tags enable row level security;
 alter table public.chat_rooms enable row level security;
 alter table public.chat_participants enable row level security;
 alter table public.chat_messages enable row level security;
@@ -467,6 +483,8 @@ grant update (
   last_name,
   avatar_path,
   bio,
+  contact_phone,
+  contact_telegram,
   gender,
   embedding
 ) on public.profiles to authenticated;
@@ -647,6 +665,70 @@ create policy "listing_images_update_creator_not_blocked"
 drop policy if exists "listing_images_delete_creator" on public.listing_images;
 create policy "listing_images_delete_creator"
   on public.listing_images for delete
+  to authenticated
+  using (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
+    )
+  );
+
+-- RLS listing_required_tags
+drop policy if exists "listing_required_tags_select_visible" on public.listing_required_tags;
+create policy "listing_required_tags_select_visible"
+  on public.listing_required_tags for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id
+        and (
+          l.is_active = true
+          or l.creator_id = auth.uid()
+          or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+        )
+    )
+  );
+
+drop policy if exists "listing_required_tags_insert_creator_not_blocked" on public.listing_required_tags;
+create policy "listing_required_tags_insert_creator_not_blocked"
+  on public.listing_required_tags for insert
+  to authenticated
+  with check (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id
+        and l.creator_id = auth.uid()
+        and not exists (
+          select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+        )
+    )
+  );
+
+drop policy if exists "listing_required_tags_update_creator_not_blocked" on public.listing_required_tags;
+create policy "listing_required_tags_update_creator_not_blocked"
+  on public.listing_required_tags for update
+  to authenticated
+  using (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
+    )
+  )
+  with check (
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id
+        and l.creator_id = auth.uid()
+        and not exists (
+          select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+        )
+    )
+  );
+
+drop policy if exists "listing_required_tags_delete_creator" on public.listing_required_tags;
+create policy "listing_required_tags_delete_creator"
+  on public.listing_required_tags for delete
   to authenticated
   using (
     exists (
@@ -1264,6 +1346,7 @@ insert into public.tag_categories (name) values
 insert into public.tags (category_id, slug, label_uk) values
   ((select id from public.tag_categories where name = 'Звички'), 'smoke_yes', '🚬 Палю'),
   ((select id from public.tag_categories where name = 'Звички'), 'smoke_no', '🚭 Не палю'),
+  ((select id from public.tag_categories where name = 'Звички'), 'smoke_sometimes', '🔄 Інколи палю'),
 
   ((select id from public.tag_categories where name = 'Режим'), 'sleep_early', '☀️ Жайворонок (ранній підйом)'),
   ((select id from public.tag_categories where name = 'Режим'), 'sleep_late', '🦉 Сова (пізній відбій)'),
