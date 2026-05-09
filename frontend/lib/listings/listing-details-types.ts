@@ -28,6 +28,8 @@ export type ListingDetailsPayload = {
   creatorId: string;
   creatorFirstName: string;
   creatorLastName: string;
+  authorName: string;
+  authorBio: string;
   creatorGender: "male" | "female" | null;
   cityName: string;
   regionName: string;
@@ -36,4 +38,5 @@ export type ListingDetailsPayload = {
   authorByCategory: ListingDetailsExclusiveByCategory;
   authorInterests: ListingDetailsTag[];
   reviewSummary: ListingDetailsReviewSummary | null;
+  similarityScore?: number | null;
 };

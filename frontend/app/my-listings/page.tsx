@@ -26,6 +26,7 @@ const LISTING_DETAILS_SELECT = `
     first_name,
     last_name,
     gender,
+    bio,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   )
 `;
