@@ -729,59 +729,12 @@ export async function getMyListingFreshDataAction(
   };
 }
 
-function intersectIdList(current: string[] | null, next: Set<string>): string[] {
+function intersectIdList(current: string[] | null, next: string[]): string[] {
   if (current === null) {
-    return [...next];
+    return next;
   }
-  return current.filter((id) => next.has(id));
-}
-
-async function fetchCreatorIdsMatchingRequiredProfileTags(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  requiredTags: Partial<Record<ProfileExclusiveTagCategory, number>> | undefined,
-): Promise<Set<string>> {
-  const selected = Object.values(requiredTags ?? {}).filter((tagId): tagId is number => typeof tagId === "number");
-  if (selected.length === 0) {
-    return new Set();
-  }
-
-  const uniqueTagIds = [...new Set(selected)];
-  const { data, error } = await supabase
-    .from("profile_tags")
-    .select("profile_id, tag_id")
-    .in("tag_id", uniqueTagIds);
-  if (error || !data?.length) {
-    return new Set();
-  }
-
-  const byCreator = new Map<string, Set<number>>();
-  for (const row of data) {
-    if (typeof row.profile_id !== "string" || !row.profile_id) {
-      continue;
-    }
-    const set = byCreator.get(row.profile_id) ?? new Set();
-    if (typeof row.tag_id === "number") {
-      set.add(row.tag_id);
-    }
-    byCreator.set(row.profile_id, set);
-  }
-
-  const requiredSet = new Set(uniqueTagIds);
-  const matched = new Set<string>();
-  for (const [profileId, tagSet] of byCreator) {
-    let hasAll = true;
-    for (const tagId of requiredSet) {
-      if (!tagSet.has(tagId)) {
-        hasAll = false;
-        break;
-      }
-    }
-    if (hasAll) {
-      matched.add(profileId);
-    }
-  }
-
-  return matched;
+  const nextSet = new Set(next);
+  return current.filter((id) => nextSet.has(id));
 }
 
 async function fetchCreatorIdsMatchingAuthorInterests(
@@ -860,20 +813,46 @@ export async function getPublicListingsAction(
     .filter((id): id is string => typeof id === "string" && id.length > 0);
 
   let creatorIdRestriction: string[] | null = null;
-  const requiredProfileTagCreators = await fetchCreatorIdsMatchingRequiredProfileTags(
-    supabase,
-    filters.requiredTags,
-  );
-  if (requiredProfileTagCreators.size > 0) {
-    creatorIdRestriction = intersectIdList(creatorIdRestriction, requiredProfileTagCreators);
-  } else if (Object.values(filters.requiredTags ?? {}).some((value) => typeof value === "number")) {
-    return { ok: true, listings: [], total: 0 };
+
+  const authorGender = filters.authorGender;
+  if (authorGender === "male" || authorGender === "female") {
+    const { data: genderRows, error: genderError } = await supabase.from("profiles").select("id").eq("gender", authorGender);
+    if (genderError) {
+      return { ok: false, reason: "invalidFilters", message: "Не вдалося застосувати фільтр за статтю автора." };
+    }
+    const genderIds = [...new Set((genderRows ?? []).map((r) => r.id).filter((id): id is string => typeof id === "string" && id.length > 0))];
+    creatorIdRestriction = intersectIdList(creatorIdRestriction, genderIds);
+    if (creatorIdRestriction.length === 0) {
+      return { ok: true, listings: [], total: 0 };
+    }
+  }
+
+  for (const cat of PROFILE_EXCLUSIVE_CATEGORIES) {
+    const tagsForCat = filters.requiredTags?.[cat];
+    if (tagsForCat && tagsForCat.length > 0) {
+      const { data: tagRows, error: tagError } = await supabase
+        .from("profile_tags")
+        .select("profile_id")
+        .in("tag_id", tagsForCat);
+      if (tagError) {
+        return { ok: false, reason: "invalidFilters", message: "Не вдалося застосувати фільтри за тегами профілю." };
+      }
+      const ids = [
+        ...new Set(
+          (tagRows ?? []).map((r) => r.profile_id).filter((id): id is string => typeof id === "string" && id.length > 0),
+        ),
+      ];
+      creatorIdRestriction = intersectIdList(creatorIdRestriction, ids);
+      if (creatorIdRestriction.length === 0) {
+        return { ok: true, listings: [], total: 0 };
+      }
+    }
   }
 
   const interestIds = filters.authorInterestTagIds ?? [];
   if (interestIds.length > 0) {
     const matchedCreators = await fetchCreatorIdsMatchingAuthorInterests(supabase, interestIds);
-    creatorIdRestriction = intersectIdList(creatorIdRestriction, new Set(matchedCreators));
+    creatorIdRestriction = intersectIdList(creatorIdRestriction, matchedCreators);
     if (creatorIdRestriction.length === 0) {
       return { ok: true, listings: [], total: 0 };
     }
@@ -886,6 +865,8 @@ export async function getPublicListingsAction(
 
   if (filters.type) {
     query = query.eq("type", filters.type);
+  } else if (filters.types && filters.types.length > 0) {
+    query = query.in("type", filters.types);
   }
   if (filters.cityId) {
     query = query.eq("city_id", filters.cityId);

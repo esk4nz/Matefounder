@@ -11,6 +11,7 @@ import {
   PROFILE_INTERESTS_CATEGORY,
   type ProfileExclusiveTagCategory,
 } from "@/app/schemas/profile";
+import { LISTING_GENDER_PREFERENCE_VALUES } from "@/app/schemas/listings";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 import { ListingCard } from "@/components/features/listings/listing-card";
 import { ListingDetailsModal } from "@/components/features/listings/listing-details-modal";
@@ -21,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type RegionOption = { id: string; name: string };
@@ -33,11 +35,16 @@ const EXCLUSIVE_LABELS: Record<ProfileExclusiveTagCategory, string> = {
   pets: "Тварини",
 };
 
-const TYPE_FILTER_OPTIONS = [
-  { value: "", label: "Усі типи" },
-  { value: "offering", label: "Шукаю сусіда" },
-  { value: "searching", label: "Шукаю житло" },
+const LOOKING_FOR_OPTIONS = [
+  { value: "roommate_to_me", label: "Когось до себе у житло", listingType: "searching" },
+  { value: "me_to_roommate", label: "До когось заселитись", listingType: "offering" },
 ] as const;
+type LookingForValue = (typeof LOOKING_FOR_OPTIONS)[number]["value"];
+const GENDER_FILTER_OPTIONS: { value: (typeof LISTING_GENDER_PREFERENCE_VALUES)[number]; label: string }[] = [
+  { value: "male", label: "Хлопець/Чоловік" },
+  { value: "female", label: "Дівчина/Жінка" },
+  { value: "any", label: "Без різниці" },
+];
 const MAX_LISTING_PRICE = 500000;
 
 type ListingsViewProps = {
@@ -74,17 +81,18 @@ function normalizeIntegerInput(value: string): string {
 }
 
 function buildFiltersPayload(args: {
-  typeFilter: "" | "offering" | "searching";
+  types: ("offering" | "searching")[];
   cityId: string;
   regionCityIds: string[] | null;
   priceMin: string;
   priceMax: string;
-  requiredTags: Partial<Record<ProfileExclusiveTagCategory, number | "">>;
+  authorGender: "male" | "female" | "any";
+  requiredTags: Partial<Record<ProfileExclusiveTagCategory, number[]>>;
   authorInterestIds: number[];
 }): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
-  if (args.typeFilter === "offering" || args.typeFilter === "searching") {
-    payload.type = args.typeFilter;
+  if (args.types.length > 0) {
+    payload.types = args.types;
   }
   const trimmedCity = args.cityId.trim();
   if (trimmedCity) {
@@ -100,15 +108,18 @@ function buildFiltersPayload(args: {
   if (priceMax !== undefined) {
     payload.priceMax = priceMax;
   }
-  const required: Partial<Record<ProfileExclusiveTagCategory, number>> = {};
+  const required: Partial<Record<ProfileExclusiveTagCategory, number[]>> = {};
   for (const cat of PROFILE_EXCLUSIVE_CATEGORIES) {
-    const v = args.requiredTags[cat];
-    if (typeof v === "number") {
-      required[cat] = v;
+    const values = args.requiredTags[cat] ?? [];
+    if (values.length > 0) {
+      required[cat] = values;
     }
   }
   if (Object.keys(required).length > 0) {
     payload.requiredTags = required;
+  }
+  if (args.authorGender !== "any") {
+    payload.authorGender = args.authorGender;
   }
   if (args.authorInterestIds.length > 0) {
     payload.authorInterestTagIds = args.authorInterestIds;
@@ -126,15 +137,17 @@ export function ListingsView({
 }: ListingsViewProps) {
   const [listings, setListings] = useState(initialListings);
   const [total, setTotal] = useState(initialTotal);
-  const [typeFilter, setTypeFilter] = useState<"" | "offering" | "searching">("");
+  const [lookingFor, setLookingFor] = useState<LookingForValue[]>([]);
   const [regionId, setRegionId] = useState("");
   const [cityId, setCityId] = useState("");
   const [priceMin, setPriceMin] = useState("");
   const [priceMax, setPriceMax] = useState("");
-  const [requiredTags, setRequiredTags] = useState<Partial<Record<ProfileExclusiveTagCategory, number | "">>>({});
+  const [requiredTags, setRequiredTags] = useState<Partial<Record<ProfileExclusiveTagCategory, number[]>>>({});
+  const [authorGender, setAuthorGender] = useState<"male" | "female" | "any">("any");
   const [authorInterestIds, setAuthorInterestIds] = useState<number[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [lastAppliedFilterSignature, setLastAppliedFilterSignature] = useState<string>("{}");
 
   const [openListingId, setOpenListingId] = useState<string | null>(null);
   const [activeListingDetails, setActiveListingDetails] = useState<ListingDetailsPayload | null>(null);
@@ -172,14 +185,16 @@ export function ListingsView({
             ? cities.filter((city) => city.region_id === regionId).map((city) => city.id)
             : null;
         const payload = buildFiltersPayload({
-          typeFilter,
+          types: LOOKING_FOR_OPTIONS.filter((option) => lookingFor.includes(option.value)).map((option) => option.listingType),
           cityId,
           regionCityIds,
           priceMin,
           priceMax,
+          authorGender,
           requiredTags,
           authorInterestIds,
         });
+        const payloadSignature = JSON.stringify(payload);
         const result = await getPublicListingsAction(payload);
         if (!result.ok) {
           if (result.reason === "unauthenticated") {
@@ -191,18 +206,35 @@ export function ListingsView({
         }
         setListings(result.listings);
         setTotal(result.total);
+        setLastAppliedFilterSignature(payloadSignature);
       })();
     });
-  }, [authorInterestIds, cities, cityId, priceMax, priceMin, regionId, requiredTags, typeFilter]);
+  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      applyFilters();
-    }, 250);
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [applyFilters]);
+  const currentFilterSignature = useMemo(() => {
+    const regionCityIds =
+      regionId && !cityId.trim() ? cities.filter((city) => city.region_id === regionId).map((city) => city.id) : null;
+    const payload = buildFiltersPayload({
+      types: LOOKING_FOR_OPTIONS.filter((option) => lookingFor.includes(option.value)).map((option) => option.listingType),
+      cityId,
+      regionCityIds,
+      priceMin,
+      priceMax,
+      authorGender,
+      requiredTags,
+      authorInterestIds,
+    });
+    return JSON.stringify(payload);
+  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
+  const hasPendingFilterChanges = currentFilterSignature !== lastAppliedFilterSignature;
+  const sliderMinPercent = useMemo(() => {
+    const minValue = parseBudgetInput(priceMin) ?? 0;
+    return Math.max(0, Math.min(100, (minValue / MAX_LISTING_PRICE) * 100));
+  }, [priceMin]);
+  const sliderMaxPercent = useMemo(() => {
+    const maxValue = parseBudgetInput(priceMax) ?? MAX_LISTING_PRICE;
+    return Math.max(0, Math.min(100, (maxValue / MAX_LISTING_PRICE) * 100));
+  }, [priceMax]);
 
   useEffect(() => {
     if (!openListingId) {
@@ -260,6 +292,14 @@ export function ListingsView({
     setAuthorInterestIds((prev) => (prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]));
   };
 
+  const toggleLookingFor = (value: LookingForValue) => {
+    setLookingFor((prev) => (prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value]));
+  };
+
+  const selectAuthorGender = (value: "male" | "female" | "any") => {
+    setAuthorGender(value);
+  };
+
   const handleBudgetMinChange = (nextRaw: string) => {
     const next = normalizeIntegerInput(nextRaw);
     const maxValue = parseBudgetInput(priceMax);
@@ -288,6 +328,35 @@ export function ListingsView({
     setPriceMax(next);
   };
 
+  const resetFilters = useCallback(() => {
+    startTransition(() => {
+      void (async () => {
+        setLookingFor([]);
+        setRegionId("");
+        setCityId("");
+        setPriceMin("");
+        setPriceMax("");
+        setRequiredTags({});
+        setAuthorGender("any");
+        setAuthorInterestIds([]);
+        setListError(null);
+        setLastAppliedFilterSignature("{}");
+
+        const result = await getPublicListingsAction({});
+        if (!result.ok) {
+          if (result.reason === "unauthenticated") {
+            setListError("Сесія завершилася. Оновіть сторінку та увійдіть знову.");
+            return;
+          }
+          setListError(result.message ?? "Не вдалося оновити список оголошень.");
+          return;
+        }
+        setListings(result.listings);
+        setTotal(result.total);
+      })();
+    });
+  }, [startTransition]);
+
   return (
     <section className="container mx-auto max-w-7xl px-6 py-12">
       <h1 className="text-3xl font-black text-slate-900">Оголошення</h1>
@@ -296,26 +365,66 @@ export function ListingsView({
       </p>
 
       <div className="mt-10 flex flex-col gap-10 lg:flex-row lg:items-start">
-        <aside className="w-full shrink-0 space-y-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:sticky lg:top-6 lg:max-h-[calc(100vh-4rem)] lg:w-80 lg:overflow-hidden lg:p-6">
-          <div className="lg:flex lg:max-h-[calc(100vh-5rem)] lg:flex-col lg:gap-6">
+        <aside className="w-full shrink-0 rounded-2xl border border-slate-200 bg-white shadow-sm lg:sticky lg:top-24 lg:max-h-[calc(100vh-6rem)] lg:w-80 lg:self-start flex flex-col py-4">
+          <div className="flex items-center justify-between gap-2 px-5 lg:px-6 pb-4 border-b border-slate-100 shrink-0">
+            <p className="text-sm font-semibold text-slate-900">Фільтри</p>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-8 px-2 text-xs text-slate-600"
+              onClick={resetFilters}
+            >
+              Скинути
+            </Button>
+          </div>
+
+          <div className="flex-1 space-y-6 overflow-y-auto px-5 py-4 lg:flex lg:flex-col lg:gap-6 lg:px-6 lg:[scrollbar-width:thin] lg:[&::-webkit-scrollbar]:w-2 lg:[&::-webkit-scrollbar-thumb]:rounded-full lg:[&::-webkit-scrollbar-thumb]:bg-slate-300 lg:[&::-webkit-scrollbar-track]:bg-transparent">
             <div className="grid gap-2">
-              <Label htmlFor="listing-type-filter" className="text-slate-700">
-                Тип анкети
-              </Label>
-              <Select
-                id="listing-type-filter"
-                className="h-11"
-                value={typeFilter}
-                onChange={(event) => {
-                  setTypeFilter(event.target.value as "" | "offering" | "searching");
-                }}
-              >
-                {TYPE_FILTER_OPTIONS.map((opt) => (
-                  <option key={opt.value === "" ? "all" : opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </Select>
+              <Label className="text-sm font-semibold text-slate-900">Я шукаю</Label>
+              <div className="flex flex-wrap gap-2">
+                {LOOKING_FOR_OPTIONS.map((option) => {
+                  const selected = lookingFor.includes(option.value);
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => toggleLookingFor(option.value)}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                        selected
+                          ? "border-blue-300 bg-blue-50 text-blue-900"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label className="text-sm font-semibold text-slate-900">Стать автора оголошення</Label>
+              <div className="flex flex-wrap gap-2">
+                {GENDER_FILTER_OPTIONS.map((option) => {
+                  const selected = authorGender === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => selectAuthorGender(option.value)}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                        selected
+                          ? "border-blue-300 bg-blue-50 text-blue-900"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-300",
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="grid gap-3">
@@ -394,7 +503,15 @@ export function ListingsView({
                   />
                 </div>
               </div>
-              <div className="grid gap-2 pt-1">
+              <div className="relative h-6 pt-2">
+                <div className="pointer-events-none absolute left-0 right-0 top-[10px] h-1 rounded-full bg-slate-200" />
+                <div
+                  className="pointer-events-none absolute top-[10px] h-1 rounded-full bg-blue-600"
+                  style={{
+                    left: `${sliderMinPercent}%`,
+                    right: `${100 - sliderMaxPercent}%`,
+                  }}
+                />
                 <input
                   type="range"
                   min={0}
@@ -402,7 +519,7 @@ export function ListingsView({
                   step={100}
                   value={parseBudgetInput(priceMin) ?? 0}
                   onChange={(e) => handleBudgetMinChange(e.target.value)}
-                  className="w-full accent-blue-600"
+                  className="pointer-events-none absolute left-0 top-0 h-6 w-full appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-blue-400 [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-sm [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-blue-400 [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:shadow-sm"
                   aria-label="Мінімальна ціна"
                 />
                 <input
@@ -412,7 +529,7 @@ export function ListingsView({
                   step={100}
                   value={parseBudgetInput(priceMax) ?? MAX_LISTING_PRICE}
                   onChange={(e) => handleBudgetMaxChange(e.target.value)}
-                  className="w-full accent-blue-600"
+                  className="pointer-events-none absolute left-0 top-0 h-6 w-full appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-blue-600 [&::-webkit-slider-thumb]:bg-blue-600 [&::-webkit-slider-thumb]:shadow-sm [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-blue-600 [&::-moz-range-thumb]:bg-blue-600 [&::-moz-range-thumb]:shadow-sm"
                   aria-label="Максимальна ціна"
                 />
               </div>
@@ -425,16 +542,22 @@ export function ListingsView({
                   <Label className="text-slate-700">{EXCLUSIVE_LABELS[category]}</Label>
                   <div className="flex flex-wrap gap-2">
                     {(tagsByCategory.get(category) ?? []).map((tag) => {
-                      const selected = requiredTags[category] === tag.id;
+                      const selected = (requiredTags[category] ?? []).includes(tag.id);
                       return (
                         <button
                           key={tag.id}
                           type="button"
                           onClick={() => {
-                            setRequiredTags((prev) => ({
-                              ...prev,
-                              [category]: selected ? "" : tag.id,
-                            }));
+                            setRequiredTags((prev) => {
+                              const prevValues = prev[category] ?? [];
+                              const nextValues = prevValues.includes(tag.id)
+                                ? prevValues.filter((id) => id !== tag.id)
+                                : [...prevValues, tag.id];
+                              return {
+                                ...prev,
+                                [category]: nextValues,
+                              };
+                            });
                           }}
                           className={cn(
                             "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
@@ -452,7 +575,7 @@ export function ListingsView({
               ))}
             </div>
 
-            <div className="grid min-h-0 flex-1 gap-2">
+            <div className="grid min-h-0 gap-2">
               <Label className="text-slate-700">Інтереси автора</Label>
               <p className="text-xs text-slate-500">
                 Показувати лише оголошення, де автор профілю позначив усі обрані інтереси.
@@ -483,7 +606,19 @@ export function ListingsView({
               </ScrollArea>
             </div>
 
-            {isPending ? <p className="text-xs text-slate-500">Оновлення списку…</p> : null}
+          </div>
+
+          <div className="px-5 lg:px-6 pt-4 mt-auto shrink-0 border-t border-slate-100 grid gap-2">
+            <Button
+              type="button"
+              className="h-11 w-full"
+              onClick={applyFilters}
+            >
+              {isPending ? "Застосовуємо фільтри..." : "Застосувати фільтри"}
+            </Button>
+            {!isPending && hasPendingFilterChanges ? (
+              <p className="text-xs text-slate-500">Є незастосовані зміни у фільтрах.</p>
+            ) : null}
           </div>
         </aside>
 

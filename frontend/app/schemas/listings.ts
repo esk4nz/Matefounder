@@ -118,16 +118,17 @@ const optionalNonNegativeInt = z.preprocess((value) => {
 
 const publicListingRequiredFiltersSchema = z
   .object({
-    habits: z.number().int().optional(),
-    routine: z.number().int().optional(),
-    social: z.number().int().optional(),
-    pets: z.number().int().optional(),
+    habits: z.array(z.number().int()).optional(),
+    routine: z.array(z.number().int()).optional(),
+    social: z.array(z.number().int()).optional(),
+    pets: z.array(z.number().int()).optional(),
   })
   .optional();
 
 export const publicListingsFiltersSchema = z
   .object({
     type: z.enum(["offering", "searching"]).optional(),
+    types: z.array(z.enum(["offering", "searching"])).optional(),
     cityId: z
       .string()
       .optional()
@@ -139,6 +140,7 @@ export const publicListingsFiltersSchema = z
     cityIds: z.array(z.string().uuid()).max(600).optional(),
     priceMin: optionalNonNegativeInt,
     priceMax: optionalNonNegativeInt,
+    authorGender: z.enum(["male", "female", "any"]).optional(),
     requiredTags: publicListingRequiredFiltersSchema,
     authorInterestTagIds: z.array(z.number().int()).optional(),
   })
@@ -159,6 +161,13 @@ export const publicListingsFiltersSchema = z
         code: z.ZodIssueCode.custom,
         path: ["priceMax"],
         message: "Верхня межа бюджету не може бути меншою за нижню.",
+      });
+    }
+    if (data.type && data.types?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["types"],
+        message: "Оберіть або один тип, або список типів.",
       });
     }
   });
