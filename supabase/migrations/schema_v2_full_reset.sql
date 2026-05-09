@@ -103,6 +103,7 @@ create table public.listings (
   id uuid primary key default gen_random_uuid(),
   creator_id uuid not null references public.profiles (id) on delete cascade,
   type text not null,
+  gender_preference text not null default 'any',
   city_id uuid not null references public.cities (id) on delete restrict,
   price integer not null check (price >= 0),
   title text not null,
@@ -113,6 +114,7 @@ create table public.listings (
   is_active boolean not null default true,
   updated_at timestamptz not null default now(),
   constraint listings_type_chk check (type in ('searching', 'offering')),
+  constraint listings_gender_preference_chk check (gender_preference in ('male', 'female', 'any')),
   constraint listings_dates_chk check (
     available_until is null or available_until >= available_from
   )

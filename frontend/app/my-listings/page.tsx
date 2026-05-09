@@ -10,6 +10,7 @@ const LISTING_DETAILS_SELECT = `
   id,
   title,
   type,
+  gender_preference,
   description,
   price,
   address,
@@ -24,6 +25,7 @@ const LISTING_DETAILS_SELECT = `
   profiles!listings_creator_id_fkey(
     first_name,
     last_name,
+    gender,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   )
 `;

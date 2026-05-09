@@ -8,6 +8,7 @@ import { createListingAction } from "@/app/actions/listings";
 import {
   LISTING_EXCLUSIVE_CATEGORIES,
   createListingFormSchema,
+  type ListingGenderPreference,
   type ListingFormValues,
 } from "@/app/schemas/listings";
 import { ListingPhotosPicker, type AnyListingPhotoItem } from "@/components/features/listings/listing-photos-picker";
@@ -36,6 +37,12 @@ const LISTING_TYPE_OPTIONS = [
   { value: "searching", label: "Я шукаю, до кого можна заселитися" },
 ] as const;
 
+const GENDER_PREFERENCE_OPTIONS: ReadonlyArray<{ value: ListingGenderPreference; label: string }> = [
+  { value: "male", label: "Хлопець/Чоловік" },
+  { value: "female", label: "Дівчина/Жінка" },
+  { value: "any", label: "Без різниці" },
+];
+
 const CATEGORY_LABELS: Record<string, string> = {
   habits: "Звички",
   routine: "Режим дня",
@@ -58,6 +65,7 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
       type: "offering",
       title: "",
       cityId: "",
+      genderPreference: "any",
       description: "",
       address: "",
       price: 0,
@@ -104,6 +112,7 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
     fd.set("type", values.type);
     fd.set("title", values.title ?? "");
     fd.set("cityId", values.cityId);
+    fd.set("genderPreference", values.genderPreference);
     fd.set("description", values.description ?? "");
     fd.set("address", values.address ?? "");
     fd.set("price", String(values.price));
@@ -186,6 +195,41 @@ export function CreateListingForm({ regions, cities, tags }: Props) {
               maxLength={120}
             />
             <FieldError message={form.formState.errors.title?.message} />
+          </div>
+
+          <div className="grid gap-2">
+            <Label
+              className={form.formState.errors.genderPreference ? "text-red-500" : "text-slate-700"}
+            >
+              Кого ви шукаєте?
+            </Label>
+            <Controller
+              control={form.control}
+              name="genderPreference"
+              render={({ field }) => (
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {GENDER_PREFERENCE_OPTIONS.map((option) => {
+                    const selected = field.value === option.value;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => field.onChange(option.value)}
+                        className={cn(
+                          "rounded-2xl border-2 px-4 py-3 text-left text-sm font-semibold transition-colors",
+                          selected
+                            ? "border-blue-600 bg-blue-50 text-blue-900 shadow-sm"
+                            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300",
+                        )}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            />
+            <FieldError message={form.formState.errors.genderPreference?.message} />
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">

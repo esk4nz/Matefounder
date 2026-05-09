@@ -5,6 +5,9 @@ import {
 } from "@/app/schemas/profile";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 
+export const LISTING_GENDER_PREFERENCE_VALUES = ["male", "female", "any"] as const;
+export type ListingGenderPreference = (typeof LISTING_GENDER_PREFERENCE_VALUES)[number];
+
 const listingTypeValues = ["offering", "searching"] as const;
 
 const SECTION_VALIDATION_LABELS: Record<string, string> = {
@@ -37,6 +40,9 @@ export function createListingFormSchema(allTags: readonly ProfileTagRow[]) {
         .min(4, "Назва надто коротка — потрібно щонайменше 4 символи.")
         .max(120, "Назва занадто довга — максимум 120 символів."),
       cityId: z.string().uuid("Оберіть місто."),
+      genderPreference: z.enum(LISTING_GENDER_PREFERENCE_VALUES, {
+        message: "Оберіть, кого ви шукаєте.",
+      }),
       description: z
         .string()
         .trim()
@@ -99,3 +105,71 @@ export type ListingFormValues = z.input<ListingFormSchema>;
 
 export const LISTING_EXCLUSIVE_CATEGORIES = PROFILE_EXCLUSIVE_CATEGORIES;
 export type ListingExclusiveCategory = ProfileExclusiveTagCategory;
+
+const optionalNonNegativeInt = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+  return value;
+}, z.number().int().min(0).max(500000).optional());
+
+const publicListingRequiredFiltersSchema = z
+  .object({
+    habits: z.array(z.number().int()).optional(),
+    routine: z.array(z.number().int()).optional(),
+    social: z.array(z.number().int()).optional(),
+    pets: z.array(z.number().int()).optional(),
+  })
+  .optional();
+
+export const publicListingsFiltersSchema = z
+  .object({
+    type: z.enum(["offering", "searching"]).optional(),
+    types: z.array(z.enum(["offering", "searching"])).optional(),
+    cityId: z
+      .string()
+      .optional()
+      .transform((value) => {
+        const trimmed = value?.trim() ?? "";
+        return trimmed.length === 0 ? undefined : trimmed;
+      })
+      .pipe(z.string().uuid().optional()),
+    cityIds: z.array(z.string().uuid()).max(600).optional(),
+    priceMin: optionalNonNegativeInt,
+    priceMax: optionalNonNegativeInt,
+    authorGender: z.enum(["male", "female", "any"]).optional(),
+    requiredTags: publicListingRequiredFiltersSchema,
+    authorInterestTagIds: z.array(z.number().int()).optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.cityId && data.cityIds?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cityIds"],
+        message: "Оберіть або одне місто, або область без конкретного міста.",
+      });
+    }
+    if (
+      data.priceMin !== undefined &&
+      data.priceMax !== undefined &&
+      data.priceMin > data.priceMax
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["priceMax"],
+        message: "Верхня межа бюджету не може бути меншою за нижню.",
+      });
+    }
+    if (data.type && data.types?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["types"],
+        message: "Оберіть або один тип, або список типів.",
+      });
+    }
+  });
+
+export type PublicListingsFilters = z.infer<typeof publicListingsFiltersSchema>;

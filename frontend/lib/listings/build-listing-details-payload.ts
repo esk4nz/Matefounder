@@ -5,6 +5,7 @@ import {
   PROFILE_INTERESTS_CATEGORY,
   type ProfileExclusiveTagCategory,
 } from "@/app/schemas/profile";
+import type { ListingGenderPreference } from "@/app/schemas/listings";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 import {
   mapTagsQueryToProfileRows,
@@ -29,6 +30,7 @@ export type ListingDetailsQueryRow = {
   id: string;
   title: string;
   type: string;
+  gender_preference: string;
   description: string;
   price: number;
   address: string | null;
@@ -53,11 +55,13 @@ export type ListingDetailsQueryRow = {
     | {
         first_name: string | null;
         last_name: string | null;
+        gender: string | null;
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }
     | {
         first_name: string | null;
         last_name: string | null;
+        gender: string | null;
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }[]
     | null;
@@ -145,6 +149,7 @@ function unwrapCreatorProfile(
 ): {
   first_name: string | null;
   last_name: string | null;
+  gender: string | null;
   profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
 } | null {
   if (!profiles) {
@@ -174,6 +179,10 @@ export function buildListingDetailsPayload(
   const region = regionNameFromCity(row.cities);
   const creator = unwrapCreatorProfile(row.profiles);
   const type = row.type === "searching" ? "searching" : "offering";
+  const genderPreference: ListingGenderPreference =
+    row.gender_preference === "male" || row.gender_preference === "female" ? row.gender_preference : "any";
+  const creatorGender =
+    creator?.gender === "male" || creator?.gender === "female" ? creator.gender : null;
 
   const requiredProfileRows = junctionToProfileTagRows(row.listing_required_tags ?? []);
   const authorProfileRows = junctionToProfileTagRows(creator?.profile_tags ?? []);
@@ -182,6 +191,7 @@ export function buildListingDetailsPayload(
     id: row.id,
     title: row.title,
     type,
+    genderPreference,
     description: row.description,
     price: row.price,
     address: row.address?.trim() || null,
@@ -190,6 +200,7 @@ export function buildListingDetailsPayload(
     creatorId: row.creator_id,
     creatorFirstName: creator?.first_name?.trim() ?? "",
     creatorLastName: creator?.last_name?.trim() ?? "",
+    creatorGender,
     cityName: city,
     regionName: region,
     imageUrls: images,
