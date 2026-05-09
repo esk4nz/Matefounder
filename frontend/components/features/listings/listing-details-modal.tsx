@@ -132,10 +132,15 @@ export function ListingDetailsModal({
         }}
       >
         <>
-          <DialogHeader className="shrink-0 space-y-1 border-b border-border px-5 py-4">
-            <DialogTitle className="text-left text-lg font-bold leading-snug text-slate-900">
+          <DialogHeader className="shrink-0 flex flex-row items-start justify-between gap-3 border-b border-border px-5 py-4 space-y-0">
+            <DialogTitle className="min-w-0 flex-1 text-left text-lg font-bold leading-snug text-slate-900">
               {listing?.title ?? fallbackTitle ?? <SkeletonBlock className="h-7 w-72 max-w-full" />}
             </DialogTitle>
+            {!loading && listing?.similarityScore != null ? (
+              <span className="shrink-0 pt-0.5 text-sm font-semibold text-slate-700">
+                Схожість: {listing.similarityScore}%
+              </span>
+            ) : null}
           </DialogHeader>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-gutter:stable]">
@@ -237,7 +242,7 @@ export function ListingDetailsModal({
                 </dl>
 
                 <div>
-                  <h3 className="text-xs font-medium text-slate-500">Опис</h3>
+                  <h3 className="text-xs font-medium text-slate-500">Опис оголошення</h3>
                   {loading || !listing ? (
                     <div className="mt-1.5 space-y-2">
                       <SkeletonBlock className="h-4 w-full" />
@@ -245,9 +250,9 @@ export function ListingDetailsModal({
                       <SkeletonBlock className="h-4 w-[70%]" />
                     </div>
                   ) : (
-                    <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-slate-800">
-                      {listing.description}
-                    </p>
+                    <div className="mt-1.5 break-words whitespace-pre-wrap">
+                      <p className="text-sm leading-relaxed text-slate-800">{listing.description}</p>
+                    </div>
                   )}
                 </div>
 
@@ -349,6 +354,23 @@ export function ListingDetailsModal({
                     </div>
                   ) : (
                     <p className="text-sm text-slate-600">Не вказано.</p>
+                  )}
+                </div>
+
+                <div className="space-y-2 pb-1">
+                  <p className="text-sm font-semibold text-slate-900">Про автора</p>
+                  {loading ? (
+                    <div className="space-y-2">
+                      <SkeletonBlock className="h-4 w-full" />
+                      <SkeletonBlock className="h-4 w-[92%]" />
+                      <SkeletonBlock className="h-4 w-[70%]" />
+                    </div>
+                  ) : (
+                    <div className="break-words whitespace-pre-wrap">
+                      <p className="text-sm leading-relaxed text-slate-800">
+                        {listing?.authorBio?.trim() ? listing.authorBio : "Не вказано"}
+                      </p>
+                    </div>
                   )}
                 </div>
               </div>

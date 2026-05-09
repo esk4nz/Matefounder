@@ -7,5 +7,6 @@ export type ListingCardModel = {
   isActive: boolean;
   updatedAt: string;
   firstImageUrl: string | null;
+  similarityScore?: number | null;
   details: ListingDetailsPayload;
 };

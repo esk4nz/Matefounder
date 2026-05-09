@@ -71,6 +71,7 @@ const LISTING_DETAILS_SELECT = `
     first_name,
     last_name,
     gender,
+    bio,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   )
 `;
@@ -915,10 +916,12 @@ export async function getPublicListingsAction(
   const listings: ListingCardModel[] = rows.map((listingRow) => {
     const row = listingRow as ListingDetailsQueryRow;
     const reviewSummary = row.creator_id === user.id ? ownReviewSummary : null;
-    const details = buildListingDetailsPayload(row, {
+    const detailsBase = buildListingDetailsPayload(row, {
       supabase,
       reviewSummary,
     });
+    const similarityScore = row.creator_id !== user.id ? 100 : undefined;
+    const details = { ...detailsBase, similarityScore };
     return {
       id: row.id,
       title: row.title,
@@ -926,6 +929,7 @@ export async function getPublicListingsAction(
       isActive: typeof row.is_active === "boolean" ? row.is_active : true,
       updatedAt: row.updated_at,
       firstImageUrl: details.imageUrls[0] ?? null,
+      similarityScore,
       details,
     };
   });
@@ -983,10 +987,12 @@ export async function getPublicListingFreshDataAction(
     }
   }
 
-  const details = buildListingDetailsPayload(row, {
+  const detailsBase = buildListingDetailsPayload(row, {
     supabase,
     reviewSummary,
   });
+  const similarityScore = row.creator_id !== user.id ? 100 : undefined;
+  const details = { ...detailsBase, similarityScore };
 
   return {
     ok: true,
@@ -998,6 +1004,7 @@ export async function getPublicListingFreshDataAction(
       isActive: typeof row.is_active === "boolean" ? row.is_active : true,
       updatedAt: row.updated_at,
       firstImageUrl: details.imageUrls[0] ?? null,
+      similarityScore,
       details,
     },
   };

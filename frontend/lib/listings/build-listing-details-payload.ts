@@ -56,12 +56,14 @@ export type ListingDetailsQueryRow = {
         first_name: string | null;
         last_name: string | null;
         gender: string | null;
+        bio: string | null;
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }
     | {
         first_name: string | null;
         last_name: string | null;
         gender: string | null;
+        bio: string | null;
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }[]
     | null;
@@ -150,6 +152,7 @@ function unwrapCreatorProfile(
   first_name: string | null;
   last_name: string | null;
   gender: string | null;
+  bio: string | null;
   profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
 } | null {
   if (!profiles) {
@@ -184,6 +187,10 @@ export function buildListingDetailsPayload(
   const creatorGender =
     creator?.gender === "male" || creator?.gender === "female" ? creator.gender : null;
 
+  const creatorFirstName = creator?.first_name?.trim() ?? "";
+  const creatorLastName = creator?.last_name?.trim() ?? "";
+  const authorName = [creatorFirstName, creatorLastName].filter(Boolean).join(" ");
+
   const requiredProfileRows = junctionToProfileTagRows(row.listing_required_tags ?? []);
   const authorProfileRows = junctionToProfileTagRows(creator?.profile_tags ?? []);
 
@@ -198,8 +205,10 @@ export function buildListingDetailsPayload(
     availableFrom: row.available_from,
     availableUntil: row.available_until,
     creatorId: row.creator_id,
-    creatorFirstName: creator?.first_name?.trim() ?? "",
-    creatorLastName: creator?.last_name?.trim() ?? "",
+    creatorFirstName,
+    creatorLastName,
+    authorName,
+    authorBio: creator?.bio?.trim() ?? "",
     creatorGender,
     cityName: city,
     regionName: region,
