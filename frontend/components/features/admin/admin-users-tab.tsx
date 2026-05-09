@@ -1,7 +1,10 @@
 "use client";
 
+import { zodResolver } from "@hookform/resolvers/zod";
 import { User as UserIcon, Search } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 import {
   type AdminUserRow,
@@ -10,12 +13,27 @@ import {
   setUserBlockedAction,
 } from "@/app/actions/admin";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { isNextRedirectFromAction } from "@/lib/next-action-redirect";
 import { cn } from "@/lib/utils";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 
 const SEARCH_DEBOUNCE_MS = 320;
+
+const adminPasswordSchema = z.object({
+  password: z.string().min(1, "Введіть пароль"),
+});
+
+type AdminPasswordFormValues = z.infer<typeof adminPasswordSchema>;
 
 type AdminUsersTabProps = {
   currentUserId: string;
@@ -59,9 +77,18 @@ export function AdminUsersTab({
   const [actionError, setActionError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [pendingKey, setPendingKey] = useState<string | null>(null);
+  const [adminRoleModalOpen, setAdminRoleModalOpen] = useState(false);
+  const [adminRoleTarget, setAdminRoleTarget] = useState<AdminUserRow | null>(null);
+  const [adminRoleError, setAdminRoleError] = useState<string | null>(null);
   const skipInitialEmptyFetch = useRef(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
+
+  const adminRolePasswordForm = useForm<AdminPasswordFormValues>({
+    resolver: zodResolver(adminPasswordSchema),
+    defaultValues: { password: "" },
+    mode: "onSubmit",
+  });
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -174,6 +201,46 @@ export function AdminUsersTab({
         }
       })();
     });
+  }
+
+  const onAdminRolePasswordSubmit = adminRolePasswordForm.handleSubmit((values) => {
+    const target = adminRoleTarget;
+    if (!target) {
+      return;
+    }
+    setAdminRoleError(null);
+    setPendingKey(`admin:${target.id}`);
+    startTransition(() => {
+      void (async () => {
+        try {
+          const result = await grantAdminRoleAction(
+            target.id,
+            target.updatedAt,
+            values.password,
+          );
+          setPendingKey(null);
+          if (!result.ok) {
+            setAdminRoleError(result.message);
+            return;
+          }
+          closeAdminRoleModal();
+          await fetchUsers(debouncedQuery);
+        } catch (e) {
+          setPendingKey(null);
+          if (isNextRedirectFromAction(e)) {
+            throw e;
+          }
+          throw e;
+        }
+      })();
+    });
+  });
+
+  function closeAdminRoleModal() {
+    setAdminRoleModalOpen(false);
+    setAdminRoleTarget(null);
+    setAdminRoleError(null);
+    adminRolePasswordForm.reset({ password: "" });
   }
 
   return (
@@ -310,15 +377,14 @@ export function AdminUsersTab({
                               size="sm"
                               variant="default"
                               disabled={isPending}
-                              onClick={() =>
-                                runAction(`admin:${u.id}`, () =>
-                                  grantAdminRoleAction(u.id, u.updatedAt),
-                                )
-                              }
+                              onClick={() => {
+                                setAdminRoleTarget(u);
+                                setAdminRoleError(null);
+                                adminRolePasswordForm.reset({ password: "" });
+                                setAdminRoleModalOpen(true);
+                              }}
                             >
-                              {pendingKey === `admin:${u.id}`
-                                ? "…"
-                                : "Надати права адміна"}
+                              Надати права адміна
                             </Button>
                           </div>
                         ) : (
@@ -345,6 +411,62 @@ export function AdminUsersTab({
           ) : null}
         </div>
       </CardContent>
+
+      <Dialog
+        open={adminRoleModalOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            closeAdminRoleModal();
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md" showCloseButton>
+          <DialogHeader>
+            <DialogTitle>Підтвердження пароля</DialogTitle>
+            <DialogDescription>
+              Введіть пароль вашого облікового запису, щоб надати цьому користувачу{" "}"
+              <span className="font-semibold text-foreground">
+                {adminRoleTarget?.username ?? "—"}
+              </span>"{" "}
+              права адміністратора.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="admin-grant-role-form"
+            className="grid gap-4 py-1"
+            onSubmit={onAdminRolePasswordSubmit}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="admin-grant-role-password">Пароль</Label>
+              <Input
+                id="admin-grant-role-password"
+                type="password"
+                autoComplete="current-password"
+                aria-invalid={!!adminRolePasswordForm.formState.errors.password}
+                {...adminRolePasswordForm.register("password")}
+              />
+              {adminRolePasswordForm.formState.errors.password ? (
+                <p className="text-sm text-destructive" role="alert">
+                  {adminRolePasswordForm.formState.errors.password.message}
+                </p>
+              ) : null}
+            </div>
+            {adminRoleError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {adminRoleError}
+              </p>
+            ) : null}
+          </form>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={closeAdminRoleModal}>
+              Скасувати
+            </Button>
+            <Button type="submit" form="admin-grant-role-form" disabled={isPending}>
+              {isPending ? "…" : "Підтвердити"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
