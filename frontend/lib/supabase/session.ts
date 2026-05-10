@@ -4,13 +4,22 @@ import { getSupabaseAnonKey, getSupabaseUrl } from "./config";
 
 const GUEST_ONLY_ROUTES = ["/login", "/signup"] as const;
 const PROTECTED_ROUTE_PREFIXES = ["/profile"] as const;
+const ACCOUNT_BLOCKED_LOGIN_PATH = "/login?error=account_blocked";
 
-function redirectHomePreservingSession(request: NextRequest, sessionResponse: NextResponse) {
-  const redirectResponse = NextResponse.redirect(new URL("/", request.url));
+function redirectPreservingSession(
+  request: NextRequest,
+  sessionResponse: NextResponse,
+  path: string,
+) {
+  const redirectResponse = NextResponse.redirect(new URL(path, request.url));
   sessionResponse.cookies.getAll().forEach(({ name, value }) => {
     redirectResponse.cookies.set(name, value);
   });
   return redirectResponse;
+}
+
+function redirectHomePreservingSession(request: NextRequest, sessionResponse: NextResponse) {
+  return redirectPreservingSession(request, sessionResponse, "/");
 }
 
 function isAdminRoute(pathname: string) {
@@ -59,6 +68,22 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
+  let profile: { is_admin: boolean; is_blocked: boolean } | null = null;
+
+  if (user) {
+    const { data } = await supabase
+      .from("profiles")
+      .select("is_admin, is_blocked")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    profile = data;
+
+    if (profile?.is_blocked === true) {
+      await supabase.auth.signOut();
+      return redirectPreservingSession(request, response, ACCOUNT_BLOCKED_LOGIN_PATH);
+    }
+  }
 
   const adminGateOnlyForDocument =
     request.method === "GET" || request.method === "HEAD";
@@ -70,12 +95,6 @@ export async function updateSession(request: NextRequest) {
       }
       return response;
     }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("is_admin")
-      .eq("id", user.id)
-      .maybeSingle();
 
     if (profile?.is_admin !== true) {
       if (adminGateOnlyForDocument) {

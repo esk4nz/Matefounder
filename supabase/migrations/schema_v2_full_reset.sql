@@ -576,9 +576,33 @@ create policy "listings_select_discovery"
   on public.listings for select
   to authenticated
   using (
-    is_active = true
+    exists (
+      select 1 from public.profiles pr
+      where pr.id = auth.uid() and pr.is_admin
+    )
     or creator_id = auth.uid()
-    or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+    or (
+      is_active = true
+      and exists (
+        select 1 from public.profiles viewer
+        where viewer.id = auth.uid() and not viewer.is_blocked
+      )
+      and exists (
+        select 1 from public.profiles creator
+        where creator.id = creator_id and not creator.is_blocked
+      )
+      and not exists (
+        select 1 from public.user_blocks ub
+        where (
+          ub.blocker_id = auth.uid()
+          and ub.blocked_id = creator_id
+        )
+        or (
+          ub.blocker_id = creator_id
+          and ub.blocked_id = auth.uid()
+        )
+      )
+    )
   );
 
 drop policy if exists "listings_insert_own_not_blocked" on public.listings;

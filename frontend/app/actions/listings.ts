@@ -800,18 +800,23 @@ export async function getPublicListingsAction(
     return { ok: false, reason: "unauthenticated" };
   }
 
-  const { data: blockRows, error: blocksError } = await supabase
-    .from("user_blocks")
-    .select("blocked_id")
-    .eq("blocker_id", user.id);
+  const [outgoingBlocksResult, incomingBlocksResult] = await Promise.all([
+    supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id),
+    supabase.from("user_blocks").select("blocker_id").eq("blocked_id", user.id),
+  ]);
 
-  if (blocksError) {
+  if (outgoingBlocksResult.error || incomingBlocksResult.error) {
     return { ok: false, reason: "invalidFilters", message: "Не вдалося застосувати обмеження профілю." };
   }
 
-  const blockedIds = (blockRows ?? [])
-    .map((row) => row.blocked_id)
-    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  const blockedIds = [
+    ...new Set(
+      [
+        ...(outgoingBlocksResult.data ?? []).map((row) => row.blocked_id),
+        ...(incomingBlocksResult.data ?? []).map((row) => row.blocker_id),
+      ].filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
 
   let creatorIdRestriction: string[] | null = null;
 
