@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { MapPinIcon } from "lucide-react";
 
@@ -91,7 +92,7 @@ export type ListingDetailsModalProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   currentUserId: string;
-  onInterested?: () => void;
+  seekerFooter?: ReactNode;
 };
 
 export function ListingDetailsModal({
@@ -101,9 +102,9 @@ export function ListingDetailsModal({
   open,
   onOpenChange,
   currentUserId,
-  onInterested,
+  seekerFooter,
 }: ListingDetailsModalProps) {
-  const showInterested = Boolean(listing && listing.creatorId !== currentUserId);
+  const showSeekerFooter = Boolean(listing && listing.creatorId !== currentUserId && seekerFooter);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -376,22 +377,14 @@ export function ListingDetailsModal({
               </div>
             </div>
 
-          <DialogFooter className="mx-0 mb-0 shrink-0 gap-2 rounded-none border-t bg-muted/40 px-5 py-4 sm:flex-row sm:justify-end">
+          <DialogFooter className="mx-0 mb-0 shrink-0 gap-3 rounded-none border-t bg-muted/40 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
             <DialogClose asChild>
               <Button type="button" variant="outline">
                 Закрити
               </Button>
             </DialogClose>
-            {showInterested && !loading ? (
-              <Button
-                type="button"
-                className="bg-blue-600 hover:bg-blue-700"
-                onClick={() => {
-                  onInterested?.();
-                }}
-              >
-                Зацікавлений
-              </Button>
+            {!loading && showSeekerFooter ? (
+              <div className="flex min-w-0 flex-1 justify-end">{seekerFooter}</div>
             ) : null}
           </DialogFooter>
         </>

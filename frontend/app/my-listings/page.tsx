@@ -72,7 +72,12 @@ export default async function MyListingsPage() {
       type: details.type,
       isActive: row.is_active,
       updatedAt: row.updated_at,
+      requestUpdatedAt: null,
       firstImageUrl,
+      similarityScore: null,
+      requestStatus: null,
+      isBlockedByMe: false,
+      isBlockedByAuthor: false,
       details,
     };
   });

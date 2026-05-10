@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 export type { ListingCardModel } from "@/lib/listings/listing-card-types";
 
@@ -17,6 +18,7 @@ type ListingCardProps = {
   onView: () => void;
   showStatusBadge?: boolean;
   trailingActions?: ReactNode;
+  seekerActions?: ReactNode;
 };
 
 export function ListingCard({
@@ -24,6 +26,7 @@ export function ListingCard({
   onView,
   showStatusBadge = false,
   trailingActions,
+  seekerActions,
 }: ListingCardProps) {
   const locationLine = [listing.details.cityName, listing.details.regionName].filter(Boolean).join(", ");
 
@@ -71,11 +74,28 @@ export function ListingCard({
             </span>
           ) : null}
         </div>
-        <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-          <Button type="button" className={trailingActions ? "h-9 px-4" : "h-9 flex-1 px-4"} onClick={onView}>
+        <div
+          className={cn(
+            "mt-auto flex items-center gap-2 pt-4",
+            !seekerActions && Boolean(trailingActions) && "justify-between",
+          )}
+        >
+          <Button
+            type="button"
+            className={cn(
+              "h-9 px-4",
+              seekerActions ? "shrink-0" : trailingActions ? "shrink-0" : "flex-1",
+            )}
+            onClick={onView}
+          >
             Оглянути
           </Button>
-          {trailingActions}
+          {seekerActions ? (
+            <div className="flex min-w-0 flex-1 items-center gap-2">{seekerActions}</div>
+          ) : null}
+          {!seekerActions && trailingActions ? (
+            <div className="flex shrink-0 items-center gap-2">{trailingActions}</div>
+          ) : null}
         </div>
       </div>
     </article>

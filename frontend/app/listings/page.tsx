@@ -1,7 +1,9 @@
 import { redirect } from "next/navigation";
 
 import { getPublicListingsAction } from "@/app/actions/listings";
-import { ListingsView } from "@/components/features/listings/listings-view";
+import { ListingsView, type ListingsSeekerProfileGate } from "@/components/features/listings/listings-view";
+import type { ListingCardModel } from "@/lib/listings/listing-card-types";
+import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-completeness";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { createClient } from "@/lib/supabase/server";
 
@@ -15,9 +17,9 @@ export default async function ListingsPage() {
     redirect("/login");
   }
 
-  const listingsResult = await getPublicListingsAction({});
-
-  const [regionsResult, citiesResult, tagsResult] = await Promise.all([
+  const [profileRes, profileTagsRes, regionsResult, citiesResult, tagsResult] = await Promise.all([
+    supabase.from("profiles").select("first_name, last_name, contact_phone").eq("id", user.id).maybeSingle(),
+    supabase.from("profile_tags").select("tag_id").eq("profile_id", user.id),
     supabase.from("regions").select("id, name").order("name", { ascending: true }),
     supabase.from("cities").select("id, name, region_id").order("name", { ascending: true }),
     supabase
@@ -31,18 +33,52 @@ export default async function ListingsPage() {
   const cities = citiesResult.data ?? [];
   const tags = mapTagsQueryToProfileRows(tagsResult.data ?? []);
 
-  if (!listingsResult.ok) {
-    if (listingsResult.reason === "unauthenticated") {
-      redirect("/login");
-    }
+  let seekerGate: ListingsSeekerProfileGate;
+
+  if (profileRes.error || !profileRes.data) {
+    seekerGate = {
+      mode: "error",
+      message: "Не вдалося знайти профіль. Оновіть сторінку та спробуйте ще раз.",
+    };
+  } else if (profileTagsRes.error) {
+    seekerGate = {
+      mode: "error",
+      message: "Не вдалося перевірити теги профілю. Спробуйте ще раз.",
+    };
+  } else if (tagsResult.error || tags.length === 0) {
+    seekerGate = {
+      mode: "error",
+      message: "Не вдалося перевірити теги профілю. Спробуйте ще раз.",
+    };
+  } else {
+    const missingFields = collectMissingSeekerProfileFields({
+      profile: profileRes.data,
+      selectedTagIds: (profileTagsRes.data ?? []).map((row) => row.tag_id),
+      allTagRows: tags,
+    });
+    seekerGate =
+      missingFields.length > 0 ? { mode: "blocked", missingFields } : { mode: "allowed" };
   }
 
-  const initialListings = listingsResult.ok ? listingsResult.listings : [];
-  const initialTotal = listingsResult.ok ? listingsResult.total : 0;
+  let initialListings: ListingCardModel[] = [];
+  let initialTotal = 0;
+
+  if (seekerGate.mode === "allowed") {
+    const listingsResult = await getPublicListingsAction({});
+    if (!listingsResult.ok) {
+      if (listingsResult.reason === "unauthenticated") {
+        redirect("/login");
+      }
+    } else {
+      initialListings = listingsResult.listings;
+      initialTotal = listingsResult.total;
+    }
+  }
 
   return (
     <ListingsView
       userId={user.id}
+      seekerGate={seekerGate}
       initialListings={initialListings}
       initialTotal={initialTotal}
       regions={regions}

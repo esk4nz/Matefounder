@@ -9,11 +9,16 @@ import {
 } from "@/app/schemas/profile";
 import { createListingFormSchema, publicListingsFiltersSchema } from "../schemas/listings";
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
+import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-completeness";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
 import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
-import type { ListingDetailsPayload, ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
+import type {
+  ListingDetailsPayload,
+  ListingDetailsReviewSummary,
+  ListingRequestStatus,
+} from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
 
 export type { UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
@@ -39,9 +44,23 @@ export type MyListingFreshDataActionResult =
       card: ListingCardModel;
     };
 
+export type PublicListingFreshDataScope = "discovery" | "my-requests";
+
 export type PublicListingsActionResult =
   | { ok: false; reason: "unauthenticated" | "invalidFilters"; message?: string }
   | { ok: true; listings: ListingCardModel[]; total: number };
+
+export type MyRequestsActionResult =
+  | { ok: false; reason: "unauthenticated" | "unknown"; message?: string }
+  | { ok: true; listings: ListingCardModel[] };
+
+export type AcceptedContactsActionResult =
+  | { ok: false; reason: "unauthenticated" | "forbidden" | "unknown"; message?: string }
+  | { ok: true; phone: string | null; telegram: string | null; email: string | null };
+
+export type SimpleListingMutationResult =
+  | { ok: false; message: string }
+  | { ok: true };
 
 export type UpdateMyListingStatusActionResult =
   | { ok: false; message: string }
@@ -75,6 +94,132 @@ const LISTING_DETAILS_SELECT = `
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   )
 `;
+
+type SeekerBatchContext = {
+  requestsByListingId: Map<
+    string,
+    { status: ListingRequestStatus; similarityScore: number | null; updatedAt: string }
+  >;
+  blockedByMe: Set<string>;
+  blockedByAuthor: Set<string>;
+};
+
+const STALE_SEEKER_STATE_MESSAGE = "Дані застаріли. Оновіть сторінку та спробуйте ще раз.";
+
+async function assertSeekerRequestUpdatedAtMatches(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  listingId: string,
+  expectedRequestUpdatedAt: string | null | undefined,
+): Promise<boolean> {
+  const expected =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expected) {
+    return true;
+  }
+  const { data: reqRow } = await supabase
+    .from("listing_requests")
+    .select("updated_at")
+    .eq("listing_id", listingId)
+    .eq("initiator_id", userId)
+    .maybeSingle();
+  return typeof reqRow?.updated_at === "string" && reqRow.updated_at === expected;
+}
+
+async function loadSeekerBatchContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  listingIds: string[],
+): Promise<SeekerBatchContext> {
+  const uniqueIds = [...new Set(listingIds)].filter((id) => id.length > 0);
+  if (uniqueIds.length === 0) {
+    return {
+      requestsByListingId: new Map(),
+      blockedByMe: new Set(),
+      blockedByAuthor: new Set(),
+    };
+  }
+
+  const [reqRes, outRes, inRes] = await Promise.all([
+    supabase
+      .from("listing_requests")
+      .select("listing_id, status, similarity_score, updated_at")
+      .eq("initiator_id", userId)
+      .in("listing_id", uniqueIds),
+    supabase.from("user_blocks").select("blocked_id").eq("blocker_id", userId),
+    supabase.from("user_blocks").select("blocker_id").eq("blocked_id", userId),
+  ]);
+
+  const requestsByListingId = new Map<
+    string,
+    { status: ListingRequestStatus; similarityScore: number | null; updatedAt: string }
+  >();
+  for (const row of reqRes.data ?? []) {
+    const lid = typeof row.listing_id === "string" ? row.listing_id : "";
+    const st = row.status;
+    const updatedAtRaw = row.updated_at;
+    const updatedAt = typeof updatedAtRaw === "string" ? updatedAtRaw : "";
+    if (lid && updatedAt && (st === "pending" || st === "accepted" || st === "rejected")) {
+      const rawScore = row.similarity_score;
+      const rounded =
+        rawScore != null && rawScore !== ""
+          ? Math.round(Number(rawScore))
+          : null;
+      const similarityScore =
+        rounded != null && Number.isFinite(rounded) ? rounded : null;
+      requestsByListingId.set(lid, {
+        status: st,
+        similarityScore,
+        updatedAt,
+      });
+    }
+  }
+
+  const blockedByMe = new Set(
+    (outRes.data ?? []).map((r) => r.blocked_id).filter((id): id is string => typeof id === "string"),
+  );
+  const blockedByAuthor = new Set(
+    (inRes.data ?? []).map((r) => r.blocker_id).filter((id): id is string => typeof id === "string"),
+  );
+
+  return { requestsByListingId, blockedByMe, blockedByAuthor };
+}
+
+function applySeekerToListingCard(
+  row: ListingDetailsQueryRow,
+  detailsBase: ListingDetailsPayload,
+  ctx: SeekerBatchContext,
+): ListingCardModel {
+  const req = ctx.requestsByListingId.get(row.id);
+  const requestStatus = req?.status ?? null;
+  const requestUpdatedAt = req?.updatedAt ?? null;
+  const similarityScore = req?.similarityScore ?? null;
+  const isBlockedByMe = ctx.blockedByMe.has(row.creator_id);
+  const isBlockedByAuthor = ctx.blockedByAuthor.has(row.creator_id);
+
+  const details: ListingDetailsPayload = {
+    ...detailsBase,
+    similarityScore,
+    requestStatus,
+    isBlockedByMe,
+    isBlockedByAuthor,
+  };
+
+  return {
+    id: row.id,
+    title: row.title,
+    type: details.type,
+    isActive: typeof row.is_active === "boolean" ? row.is_active : true,
+    updatedAt: row.updated_at,
+    requestUpdatedAt,
+    firstImageUrl: details.imageUrls[0] ?? null,
+    similarityScore,
+    requestStatus,
+    isBlockedByMe,
+    isBlockedByAuthor,
+    details,
+  };
+}
 
 function joinUkrainianList(parts: string[]) {
   if (parts.length === 0) {
@@ -152,35 +297,11 @@ async function assertProfileReadyForListing(): Promise<ProfileReadyResult> {
     };
   }
 
-  const selectedTagIds = new Set((selectedTagRows ?? []).map((row) => row.tag_id));
-
-  const selectedRequiredCategories = new Set<string>();
-  for (const row of allTagRows) {
-    if (!selectedTagIds.has(row.id)) {
-      continue;
-    }
-    if (row.category !== "interests") {
-      selectedRequiredCategories.add(row.category);
-    }
-  }
-
-  const hasAllRequiredTagCategories = PROFILE_EXCLUSIVE_CATEGORIES.every((category) =>
-    selectedRequiredCategories.has(category),
-  );
-
-  const missingFields: string[] = [];
-  if (!profile.first_name?.trim()) {
-    missingFields.push("ім'я");
-  }
-  if (!profile.last_name?.trim()) {
-    missingFields.push("прізвище");
-  }
-  if (!profile.contact_phone?.trim()) {
-    missingFields.push("номер телефону");
-  }
-  if (!hasAllRequiredTagCategories) {
-    missingFields.push("обов'язкові теги профілю");
-  }
+  const missingFields = collectMissingSeekerProfileFields({
+    profile,
+    selectedTagIds: (selectedTagRows ?? []).map((row) => row.tag_id),
+    allTagRows,
+  });
 
   if (missingFields.length > 0) {
     return {
@@ -724,7 +845,12 @@ export async function getMyListingFreshDataAction(
       type: details.type,
       isActive: typeof row.is_active === "boolean" ? row.is_active : true,
       updatedAt: row.updated_at,
+      requestUpdatedAt: null,
       firstImageUrl: details.imageUrls[0] ?? null,
+      similarityScore: null,
+      requestStatus: null,
+      isBlockedByMe: false,
+      isBlockedByAuthor: false,
       details,
     },
   };
@@ -905,6 +1031,11 @@ export async function getPublicListingsAction(
   }
 
   const rows = listingRows ?? [];
+  const seekerCtx = await loadSeekerBatchContext(
+    supabase,
+    user.id,
+    rows.map((r) => (r as ListingDetailsQueryRow).id),
+  );
 
   const listings: ListingCardModel[] = rows.map((listingRow) => {
     const row = listingRow as ListingDetailsQueryRow;
@@ -912,18 +1043,7 @@ export async function getPublicListingsAction(
       supabase,
       reviewSummary: null,
     });
-    const similarityScore = 100;
-    const details = { ...detailsBase, similarityScore };
-    return {
-      id: row.id,
-      title: row.title,
-      type: details.type,
-      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
-      updatedAt: row.updated_at,
-      firstImageUrl: details.imageUrls[0] ?? null,
-      similarityScore,
-      details,
-    };
+    return applySeekerToListingCard(row, detailsBase, seekerCtx);
   });
 
   return {
@@ -935,6 +1055,7 @@ export async function getPublicListingsAction(
 
 export async function getPublicListingFreshDataAction(
   listingId: string,
+  options?: { scope?: PublicListingFreshDataScope },
 ): Promise<MyListingFreshDataActionResult> {
   const supabase = await createClient();
   const {
@@ -945,25 +1066,32 @@ export async function getPublicListingFreshDataAction(
     return { ok: false, reason: "unauthenticated" };
   }
 
-  const { data: blockRows } = await supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id);
-  const blocked = new Set(
-    (blockRows ?? []).map((row) => row.blocked_id).filter((id): id is string => typeof id === "string"),
-  );
+  const scope = options?.scope ?? "discovery";
+  const trimmedId = listingId.trim();
 
-  const { data: listingRow, error: listingError } = await supabase
-    .from("listings")
-    .select(LISTING_DETAILS_SELECT)
-    .eq("id", listingId.trim())
-    .eq("is_active", true)
-    .maybeSingle();
+  const [{ data: outgoingBlocks }, { data: incomingBlocks }, { data: listingRow, error: listingError }] =
+    await Promise.all([
+      supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id),
+      supabase.from("user_blocks").select("blocker_id").eq("blocked_id", user.id),
+      supabase.from("listings").select(LISTING_DETAILS_SELECT).eq("id", trimmedId).eq("is_active", true).maybeSingle(),
+    ]);
 
   if (listingError || !listingRow) {
     return { ok: false, reason: "notFound" };
   }
 
   const row = listingRow as ListingDetailsQueryRow;
-  if (blocked.has(row.creator_id)) {
-    return { ok: false, reason: "notFound" };
+
+  if (scope === "discovery") {
+    const blockedIds = new Set(
+      [
+        ...(outgoingBlocks ?? []).map((b) => b.blocked_id),
+        ...(incomingBlocks ?? []).map((b) => b.blocker_id),
+      ].filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+    if (blockedIds.has(row.creator_id)) {
+      return { ok: false, reason: "notFound" };
+    }
   }
 
   let reviewSummary: ListingDetailsReviewSummary | null = null;
@@ -983,22 +1111,335 @@ export async function getPublicListingFreshDataAction(
     supabase,
     reviewSummary,
   });
-  const similarityScore = row.creator_id !== user.id ? 100 : undefined;
-  const details = { ...detailsBase, similarityScore };
+
+  const seekerCtx = await loadSeekerBatchContext(supabase, user.id, [row.id]);
+  const card = applySeekerToListingCard(row, detailsBase, seekerCtx);
 
   return {
     ok: true,
-    details,
-    card: {
-      id: row.id,
-      title: row.title,
-      type: details.type,
-      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
-      updatedAt: row.updated_at,
-      firstImageUrl: details.imageUrls[0] ?? null,
-      similarityScore,
-      details,
-    },
+    details: card.details,
+    card,
+  };
+}
+
+export async function getMyRequestsAction(): Promise<MyRequestsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const { data: requestRows, error: reqError } = await supabase
+    .from("listing_requests")
+    .select("listing_id")
+    .eq("initiator_id", user.id);
+
+  if (reqError) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити заявки." };
+  }
+
+  const listingIds = [
+    ...new Set(
+      (requestRows ?? [])
+        .map((r) => r.listing_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+
+  if (listingIds.length === 0) {
+    return { ok: true, listings: [] };
+  }
+
+  const { data: listingRows, error: listError } = await supabase
+    .from("listings")
+    .select(LISTING_DETAILS_SELECT)
+    .in("id", listingIds);
+
+  if (listError || !listingRows?.length) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити оголошення." };
+  }
+
+  const seekerCtx = await loadSeekerBatchContext(
+    supabase,
+    user.id,
+    listingRows.map((r) => (r as ListingDetailsQueryRow).id),
+  );
+
+  const listings: ListingCardModel[] = listingRows.map((listingRow) => {
+    const row = listingRow as ListingDetailsQueryRow;
+    const detailsBase = buildListingDetailsPayload(row, {
+      supabase,
+      reviewSummary: null,
+    });
+    return applySeekerToListingCard(row, detailsBase, seekerCtx);
+  });
+
+  listings.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+
+  return { ok: true, listings };
+}
+
+export async function createListingRequestAction(
+  listingId: string,
+  expectedListingUpdatedAt: string,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Увійдіть, щоб подати заявку." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmed)
+    .eq("is_active", true)
+    .maybeSingle();
+
+  if (!listing || listing.creator_id === user.id) {
+    return { ok: false, message: "Оголошення недоступне." };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const creatorId = listing.creator_id as string;
+  const [{ data: blockOut }, { data: blockIn }] = await Promise.all([
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", user.id).eq("blocked_id", creatorId).maybeSingle(),
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", creatorId).eq("blocked_id", user.id).maybeSingle(),
+  ]);
+
+  if (blockOut || blockIn) {
+    return { ok: false, message: "Оголошення більше недоступне." };
+  }
+
+  const { error } = await supabase.from("listing_requests").insert({
+    listing_id: trimmed,
+    initiator_id: user.id,
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: false, message: "Заявку вже подано." };
+    }
+    return { ok: false, message: "Не вдалося подати заявку. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  return { ok: true };
+}
+
+export async function cancelListingRequestAction(
+  listingId: string,
+  expectedRequestUpdatedAt: string,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+
+  const { data: deletedRows, error } = await supabase
+    .from("listing_requests")
+    .delete()
+    .eq("listing_id", trimmed)
+    .eq("initiator_id", user.id)
+    .eq("status", "pending")
+    .eq("updated_at", expectedRequestUpdatedAt)
+    .select("id");
+
+  if (error) {
+    return { ok: false, message: "Не вдалося скасувати заявку. Спробуйте ще раз." };
+  }
+  if (!deletedRows?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  return { ok: true };
+}
+
+export async function blockListingAuthorAction(
+  listingId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (!listing || listing.creator_id === user.id) {
+    return { ok: false, message: "Оголошення недоступне." };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertSeekerRequestUpdatedAtMatches(
+    supabase,
+    user.id,
+    trimmed,
+    expectedRequestUpdatedAt,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { error } = await supabase.from("user_blocks").insert({
+    blocker_id: user.id,
+    blocked_id: listing.creator_id,
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      revalidatePath("/listings");
+      revalidatePath("/my-requests");
+      return { ok: true };
+    }
+    return { ok: false, message: "Не вдалося заблокувати користувача. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  return { ok: true };
+}
+
+export async function unblockListingAuthorAction(
+  listingId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, message: "Оголошення недоступне." };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertSeekerRequestUpdatedAtMatches(
+    supabase,
+    user.id,
+    trimmed,
+    expectedRequestUpdatedAt,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { error } = await supabase
+    .from("user_blocks")
+    .delete()
+    .eq("blocker_id", user.id)
+    .eq("blocked_id", listing.creator_id);
+
+  if (error) {
+    return { ok: false, message: "Не вдалося розблокувати користувача. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  return { ok: true };
+}
+
+export async function getAcceptedContactsAction(
+  listingId: string,
+  expectedRequestUpdatedAt: string,
+): Promise<AcceptedContactsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase.from("listings").select("creator_id").eq("id", trimmed).maybeSingle();
+
+  if (!listing) {
+    return { ok: false, reason: "forbidden", message: "Оголошення недоступне." };
+  }
+
+  const { data: acceptedRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmed)
+    .eq("initiator_id", user.id)
+    .eq("status", "accepted")
+    .eq("updated_at", expectedRequestUpdatedAt)
+    .maybeSingle();
+
+  if (!acceptedRow) {
+    return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: rpcData, error } = await supabase.rpc("get_accepted_contacts", {
+    p_target_id: listing.creator_id,
+    p_listing_id: trimmed,
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      reason: "forbidden",
+      message: "Немає доступу до контактів для цього оголошення.",
+    };
+  }
+
+  type RpcRow = { phone?: string | null; telegram?: string | null; email?: string | null };
+  const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as RpcRow | undefined;
+
+  return {
+    ok: true,
+    phone: row?.phone ?? null,
+    telegram: row?.telegram ?? null,
+    email: row?.email ?? null,
   };
 }
 

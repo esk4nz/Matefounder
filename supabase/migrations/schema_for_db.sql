@@ -319,6 +319,24 @@ $$;
 
 revoke all on function public.review_allowed_by_request(uuid, uuid) from public;
 
+create or replace function public.seeker_has_request_for_listing(p_listing_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.listing_requests lr
+    where lr.listing_id = p_listing_id
+      and lr.initiator_id = auth.uid()
+  );
+$$;
+
+revoke all on function public.seeker_has_request_for_listing(uuid) from public;
+grant execute on function public.seeker_has_request_for_listing(uuid) to authenticated;
+
 create or replace function public.admin_console_list_users(
   p_search text,
   p_limit integer,
@@ -601,6 +619,10 @@ create policy "listings_select_discovery"
     )
     or creator_id = auth.uid()
     or (
+      creator_id <> auth.uid()
+      and public.seeker_has_request_for_listing(id)
+    )
+    or (
       is_active = true
       and exists (
         select 1 from public.profiles viewer
@@ -666,6 +688,7 @@ create policy "listing_images_select_visible"
           l.is_active = true
           or l.creator_id = auth.uid()
           or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+          or public.seeker_has_request_for_listing(l.id)
         )
     )
   );
@@ -729,6 +752,7 @@ create policy "listing_required_tags_select_visible"
           l.is_active = true
           or l.creator_id = auth.uid()
           or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+          or public.seeker_has_request_for_listing(l.id)
         )
     )
   );

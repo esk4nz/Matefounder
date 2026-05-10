@@ -217,5 +217,9 @@ export function buildListingDetailsPayload(
     authorByCategory: toExclusiveByCategory(authorProfileRows),
     authorInterests: toInterestTags(authorProfileRows),
     reviewSummary: opts.reviewSummary,
+    similarityScore: null,
+    requestStatus: null,
+    isBlockedByMe: false,
+    isBlockedByAuthor: false,
   };
 }
