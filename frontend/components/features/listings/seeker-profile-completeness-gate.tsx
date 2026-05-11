@@ -24,7 +24,7 @@ export function SeekerProfileCompletenessGate(props: SeekerProfileCompletenessGa
     props.variant === "error" ? "Не вдалося перевірити профіль" : "Ваш профіль не заповнено";
 
   return (
-    <section className="container mx-auto max-w-7xl px-6 py-12">
+    <div className="w-full">
       <div className="flex min-h-[58vh] flex-col items-center justify-center">
         <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white px-8 py-10 text-center shadow-sm">
           <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-blue-50 text-blue-700">
@@ -37,6 +37,6 @@ export function SeekerProfileCompletenessGate(props: SeekerProfileCompletenessGa
           </Button>
         </div>
       </div>
-    </section>
+    </div>
   );
 }

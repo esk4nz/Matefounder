@@ -5,6 +5,7 @@ import { MyListingsView } from "@/components/features/listings/my-listings-view"
 import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details-payload";
 import type { ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 
 const LISTING_DETAILS_SELECT = `
@@ -85,5 +86,9 @@ export default async function MyListingsPage() {
     };
   });
 
-  return <MyListingsView userId={user.id} listings={listings} />;
+  return (
+    <section className={PAGE_SHELL_CLASS}>
+      <MyListingsView userId={user.id} listings={listings} />
+    </section>
+  );
 }

@@ -4,6 +4,7 @@ import { MyListingsFlashRedirect } from "@/components/features/listings/my-listi
 import type { ListingFormValues } from "@/app/schemas/listings";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import type { ExistingListingPhotoItem } from "@/components/features/listings/listing-photos-picker";
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 
 type Props = {
@@ -94,7 +95,7 @@ export default async function EditMyListingPage({ params }: Props) {
   };
 
   return (
-    <section className="container mx-auto max-w-5xl px-6 py-12">
+    <section className={PAGE_SHELL_CLASS}>
       <div className="mt-8">
         <EditListingForm
           regions={regions}

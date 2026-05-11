@@ -420,7 +420,7 @@ export function ListingsView({
   }
 
   return (
-    <section className="container mx-auto max-w-7xl px-6 py-12">
+    <div className="w-full">
       <h1 className="text-3xl font-black text-slate-900">Оголошення</h1>
       <p className="mt-3 max-w-2xl text-slate-600">
         Знайдіть співмешканця або житло за типом анкети, містом, бюджетом та очікуваннями щодо способу життя.
@@ -769,6 +769,6 @@ export function ListingsView({
         telegram={contactsPayload?.telegram ?? null}
         email={contactsPayload?.email ?? null}
       />
-    </section>
+    </div>
   );
 }

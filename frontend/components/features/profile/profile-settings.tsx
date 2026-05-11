@@ -448,7 +448,7 @@ export function ProfileSettings({
   };
 
   return (
-    <section className="container mx-auto flex max-w-5xl flex-1 flex-col gap-6 px-6 py-10">
+    <div className="flex w-full flex-col gap-6">
       <div className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
         <ProfileDetailsCard
           form={profileForm}
@@ -517,6 +517,6 @@ export function ProfileSettings({
           />
         </div>
       </div>
-    </section>
+    </div>
   );
 }

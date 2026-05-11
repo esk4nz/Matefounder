@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { ProfileSettings } from "@/components/features/profile/profile-settings";
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import type { ProfileGenderForm, ProfileTagRow } from "@/components/features/profile/profile-types";
 import { buildInitialTagFormState } from "@/app/schemas/profile";
 import { userHasPassword } from "@/lib/auth/user";
@@ -61,6 +62,7 @@ export default async function ProfilePage() {
     profile.last_name || String(user.user_metadata?.last_name ?? user.user_metadata?.family_name ?? "");
 
   return (
+    <section className={PAGE_SHELL_CLASS}>
     <ProfileSettings
       key={`${user.id}:${profile.updated_at}`}
       allTags={allTags}
@@ -83,5 +85,6 @@ export default async function ProfilePage() {
       hasPassword={hasPassword}
       isAdmin={isAdmin}
     />
+    </section>
   );
 }

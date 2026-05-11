@@ -178,7 +178,7 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
   }, [openListingId]);
 
   return (
-    <section className="container mx-auto max-w-5xl px-6 py-12">
+    <div className="w-full">
       <h1 className="text-3xl font-black text-slate-900">Мої оголошення</h1>
       <p className="mt-3 max-w-2xl text-slate-600">
         Керуйте своїми оголошеннями та відстежуйте відповіді від інших користувачів.
@@ -303,6 +303,6 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </section>
+    </div>
   );
 }
