@@ -67,6 +67,7 @@ export type ListingDetailsQueryRow = {
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }[]
     | null;
+  listing_requests?: { count: number }[] | null;
 };
 
 function unwrapCityRow(

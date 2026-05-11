@@ -14,5 +14,6 @@ export type ListingCardModel = {
   requestStatus: ListingRequestStatus | null;
   isBlockedByMe: boolean;
   isBlockedByAuthor: boolean;
+  incomingRequestsCount?: number;
   details: ListingDetailsPayload;
 };

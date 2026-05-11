@@ -16,6 +16,7 @@ import {
   getListingMyListingsFlashMessage,
   LISTING_MY_LISTINGS_FLASH_STORAGE_KEY,
 } from "@/lib/listings/listing-error-codes";
+import { formatMyListingRequestsButtonLabel } from "@/lib/listings/listing-requests-count";
 import { CreateListingCta } from "@/components/features/listings/create-listing-cta";
 import { ListingDetailsModal } from "@/components/features/listings/listing-details-modal";
 import {
@@ -203,38 +204,50 @@ export function MyListingsView({ userId, listings }: MyListingsViewProps) {
               onView={() => setOpenListingId(listing.id)}
               showStatusBadge
               trailingActions={
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button type="button" variant="outline" size="icon" aria-label="Меню дій">
-                      <MoreHorizontal className="size-4" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem asChild>
-                      <Link href={`/my-listings/${listing.id}/edit`}>Редагувати</Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        void handleStatusToggle(listing);
-                      }}
-                      disabled={statusActionListingId === listing.id || isDeletePending}
-                    >
-                      {listing.isActive ? "Зробити неактивним" : "Зробити активним"}
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem
-                      className="text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
-                      onClick={() => {
-                        setDeleteServerError(null);
-                        setDeleteTargetListingId(listing.id);
-                      }}
-                      disabled={isDeletePending}
-                    >
-                      <Trash2 className="size-4" aria-hidden />
-                      Видалити
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Button
+                    asChild
+                    variant="secondary"
+                    size="sm"
+                    className="border border-amber-500/35 bg-amber-50 text-amber-950 shadow-none hover:bg-amber-100/90 dark:border-amber-500/30 dark:bg-amber-950/25 dark:text-amber-50 dark:hover:bg-amber-950/40"
+                  >
+                    <Link href={`/my-listings/${listing.id}/requests`}>
+                      {formatMyListingRequestsButtonLabel(listing.incomingRequestsCount ?? 0)}
+                    </Link>
+                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button type="button" variant="outline" size="icon" aria-label="Меню дій">
+                        <MoreHorizontal className="size-4" aria-hidden />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem asChild>
+                        <Link href={`/my-listings/${listing.id}/edit`}>Редагувати</Link>
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          void handleStatusToggle(listing);
+                        }}
+                        disabled={statusActionListingId === listing.id || isDeletePending}
+                      >
+                        {listing.isActive ? "Зробити неактивним" : "Зробити активним"}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="text-destructive data-highlighted:bg-destructive/10 data-highlighted:text-destructive"
+                        onClick={() => {
+                          setDeleteServerError(null);
+                          setDeleteTargetListingId(listing.id);
+                        }}
+                        disabled={isDeletePending}
+                      >
+                        <Trash2 className="size-4" aria-hidden />
+                        Видалити
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               }
             />
           ))}

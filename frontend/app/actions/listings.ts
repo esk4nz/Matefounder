@@ -9,9 +9,14 @@ import {
 } from "@/app/schemas/profile";
 import { createListingFormSchema, publicListingsFiltersSchema } from "../schemas/listings";
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
+import type {
+  GetIncomingRequestsActionResult,
+  OwnerIncomingRequestItem,
+} from "@/lib/listings/owner-incoming-request-types";
 import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-completeness";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
+import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
 import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
 import type {
@@ -96,7 +101,8 @@ const LISTING_DETAILS_SELECT = `
     gender,
     bio,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
-  )
+  ),
+  listing_requests(count)
 `;
 
 type SeekerBatchContext = {
@@ -115,7 +121,9 @@ async function gateListingPeerInteraction(
   supabase: Awaited<ReturnType<typeof createClient>>,
   actorId: string,
   opponentId: string,
+  _mode: "default" | "strict" = "default",
 ): Promise<{ ok: true } | { ok: false }> {
+  void _mode;
   const [
     { data: opponentProfile },
     { data: actorProfile },
@@ -178,6 +186,28 @@ async function assertSeekerRequestUpdatedAtMatches(
     .select("updated_at")
     .eq("listing_id", listingId)
     .eq("initiator_id", userId)
+    .maybeSingle();
+  return typeof reqRow?.updated_at === "string" && reqRow.updated_at === expected;
+}
+
+async function assertOwnerListingRequestUpdatedAtMatches(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  listingId: string,
+  requestId: string,
+  seekerId: string,
+  expectedRequestUpdatedAt: string | null | undefined,
+): Promise<boolean> {
+  const expected =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expected) {
+    return true;
+  }
+  const { data: reqRow } = await supabase
+    .from("listing_requests")
+    .select("updated_at")
+    .eq("id", requestId)
+    .eq("listing_id", listingId)
+    .eq("initiator_id", seekerId)
     .maybeSingle();
   return typeof reqRow?.updated_at === "string" && reqRow.updated_at === expected;
 }
@@ -907,6 +937,7 @@ export async function getMyListingFreshDataAction(
       requestStatus: null,
       isBlockedByMe: false,
       isBlockedByAuthor: false,
+      incomingRequestsCount: extractListingIncomingRequestsCount(row),
       details,
     },
   };
@@ -1238,6 +1269,151 @@ export async function getMyRequestsAction(): Promise<MyRequestsActionResult> {
   return { ok: true, listings };
 }
 
+export async function getIncomingRequestsAction(listingId: string): Promise<GetIncomingRequestsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated", message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing, error: listErr } = await supabase
+    .from("listings")
+    .select("id, title, updated_at")
+    .eq("id", trimmed)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (listErr || !listing || typeof listing.title !== "string" || typeof listing.updated_at !== "string") {
+    return {
+      ok: false,
+      reason: "forbidden",
+      message: "Оголошення недоступне або ви не є його автором.",
+    };
+  }
+
+  const { data: reqRows, error: reqErr } = await supabase
+    .from("listing_requests")
+    .select("id, initiator_id, status, updated_at, similarity_score")
+    .eq("listing_id", trimmed);
+
+  if (reqErr) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити заявки." };
+  }
+
+  const rows = reqRows ?? [];
+  if (rows.length === 0) {
+    return {
+      ok: true,
+      listingTitle: listing.title,
+      listingUpdatedAt: listing.updated_at,
+      requests: [],
+    };
+  }
+
+  const initiatorIds = [
+    ...new Set(
+      rows
+        .map((r) => (typeof r.initiator_id === "string" ? r.initiator_id : ""))
+        .filter((id) => id.length > 0),
+    ),
+  ];
+
+  const [profilesRes, myBlocksRes, blockedMeRes] = await Promise.all([
+    supabase.from("profiles").select("id, first_name, last_name, avatar_path").in("id", initiatorIds),
+    supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id),
+    supabase.from("user_blocks").select("blocker_id").eq("blocked_id", user.id),
+  ]);
+
+  if (profilesRes.error) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити профілі заявників." };
+  }
+
+  const profileById = new Map<
+    string,
+    { first_name: string | null; last_name: string | null; avatar_path: string | null }
+  >();
+  for (const p of profilesRes.data ?? []) {
+    if (typeof p.id === "string") {
+      profileById.set(p.id, {
+        first_name: typeof p.first_name === "string" ? p.first_name : null,
+        last_name: typeof p.last_name === "string" ? p.last_name : null,
+        avatar_path: typeof p.avatar_path === "string" && p.avatar_path.length > 0 ? p.avatar_path : null,
+      });
+    }
+  }
+
+  const profileImageBucket = supabase.storage.from("profile-images");
+
+  const iBlockedSeekerIds = new Set(
+    (myBlocksRes.data ?? [])
+      .map((r) => r.blocked_id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const seekerIdsWhoBlockedMe = new Set(
+    (blockedMeRes.data ?? [])
+      .map((r) => r.blocker_id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+
+  const requests: OwnerIncomingRequestItem[] = [];
+  for (const r of rows) {
+    const requestId = typeof r.id === "string" ? r.id : "";
+    const seekerId = typeof r.initiator_id === "string" ? r.initiator_id : "";
+    const st = r.status;
+    const updatedAt = typeof r.updated_at === "string" ? r.updated_at : "";
+    if (!requestId || !seekerId || !updatedAt) {
+      continue;
+    }
+    if (st !== "pending" && st !== "accepted" && st !== "rejected") {
+      continue;
+    }
+
+    const seekerBlockedMe = seekerIdsWhoBlockedMe.has(seekerId);
+    const iBlockedSeeker = iBlockedSeekerIds.has(seekerId);
+    if (seekerBlockedMe && !iBlockedSeeker) {
+      continue;
+    }
+
+    const prof = profileById.get(seekerId);
+    const seekerFirstName = prof?.first_name?.trim() || "Користувач";
+    const lastRaw = typeof prof?.last_name === "string" ? prof.last_name.trim() : "";
+    const seekerLastName = lastRaw.length > 0 ? lastRaw : null;
+    const seekerAvatarUrl =
+      prof?.avatar_path != null
+        ? profileImageBucket.getPublicUrl(prof.avatar_path).data.publicUrl
+        : null;
+
+    const rawScore = r.similarity_score;
+    const rounded = rawScore != null && rawScore !== "" ? Math.round(Number(rawScore)) : null;
+    const similarityScore = rounded != null && Number.isFinite(rounded) ? rounded : null;
+
+    requests.push({
+      requestId,
+      seekerId,
+      status: st,
+      requestUpdatedAt: updatedAt,
+      similarityScore,
+      seekerFirstName,
+      seekerLastName,
+      seekerAvatarUrl,
+      iBlockedSeeker,
+    });
+  }
+
+  requests.sort((a, b) => (a.requestUpdatedAt < b.requestUpdatedAt ? 1 : -1));
+
+  return {
+    ok: true,
+    listingTitle: listing.title,
+    listingUpdatedAt: listing.updated_at,
+    requests,
+  };
+}
+
 export async function createListingRequestAction(
   listingId: string,
   expectedListingUpdatedAt: string,
@@ -1287,6 +1463,8 @@ export async function createListingRequestAction(
 
   revalidatePath("/listings");
   revalidatePath("/my-requests");
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmed}/requests`);
   return { ok: true };
 }
 
@@ -1357,6 +1535,8 @@ export async function cancelListingRequestAction(
 
   revalidatePath("/listings");
   revalidatePath("/my-requests");
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmed}/requests`);
   return { ok: true };
 }
 
@@ -1548,6 +1728,274 @@ export async function getAcceptedContactsAction(
   };
 }
 
+export async function getOwnerSeekerContactsAction(
+  listingId: string,
+  seekerId: string,
+  expectedRequestUpdatedAt: string,
+): Promise<AcceptedContactsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const trimmedListing = listingId.trim();
+  const trimmedSeeker = seekerId.trim();
+  const expectedReq =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!trimmedListing || !trimmedSeeker || !expectedReq) {
+    return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id")
+    .eq("id", trimmedListing)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, reason: "forbidden", message: "Оголошення недоступне. Оновіть сторінку." };
+  }
+
+  const { data: acceptedRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmedListing)
+    .eq("initiator_id", trimmedSeeker)
+    .eq("status", "accepted")
+    .eq("updated_at", expectedReq)
+    .maybeSingle();
+
+  if (!acceptedRow) {
+    return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const contactsGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker, "strict");
+  if (!contactsGate.ok) {
+    return { ok: false, reason: "forbidden", message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { data: rpcData, error } = await supabase.rpc("get_accepted_contacts", {
+    p_target_id: trimmedSeeker,
+    p_listing_id: trimmedListing,
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      reason: "forbidden",
+      message: "Немає доступу до контактів для цієї заявки.",
+    };
+  }
+
+  type RpcRow = { phone?: string | null; telegram?: string | null; email?: string | null };
+  const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as RpcRow | undefined;
+
+  return {
+    ok: true,
+    phone: row?.phone ?? null,
+    telegram: row?.telegram ?? null,
+    email: row?.email ?? null,
+  };
+}
+
+async function gateOwnerUnblockSeekerPeer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+  seekerId: string,
+): Promise<{ ok: true } | { ok: false }> {
+  const [{ data: seekerProfile }, { data: ownerProfile }] = await Promise.all([
+    supabase.from("profiles").select("is_blocked").eq("id", seekerId).maybeSingle(),
+    supabase.from("profiles").select("is_blocked").eq("id", ownerId).maybeSingle(),
+  ]);
+
+  if (ownerProfile?.is_blocked === true || seekerProfile?.is_blocked === true) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
+
+export async function blockListingSeekerAction(
+  listingId: string,
+  seekerId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmedListing = listingId.trim();
+  const trimmedSeeker = seekerId.trim();
+  if (!trimmedListing || !trimmedSeeker) {
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
+  }
+
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmedListing)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (!listing || listing.creator_id !== user.id) {
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const expectedReqRaw =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expectedReqRaw) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: requestRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmedListing)
+    .eq("initiator_id", trimmedSeeker)
+    .maybeSingle();
+
+  if (!requestRow || typeof requestRow.id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertOwnerListingRequestUpdatedAtMatches(
+    supabase,
+    trimmedListing,
+    requestRow.id,
+    trimmedSeeker,
+    expectedReqRaw,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const blockGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker, "strict");
+  if (!blockGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { error } = await supabase.from("user_blocks").insert({
+    blocker_id: user.id,
+    blocked_id: trimmedSeeker,
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      revalidatePath("/my-listings");
+      revalidatePath(`/my-listings/${trimmedListing}/requests`);
+      return { ok: true };
+    }
+    return { ok: false, message: "Не вдалося заблокувати користувача. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmedListing}/requests`);
+  return { ok: true };
+}
+
+export async function unblockListingSeekerAction(
+  listingId: string,
+  seekerId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmedListing = listingId.trim();
+  const trimmedSeeker = seekerId.trim();
+  if (!trimmedListing || !trimmedSeeker) {
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
+  }
+
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmedListing)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const expectedReqRaw =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expectedReqRaw) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: requestRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmedListing)
+    .eq("initiator_id", trimmedSeeker)
+    .maybeSingle();
+
+  if (!requestRow || typeof requestRow.id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertOwnerListingRequestUpdatedAtMatches(
+    supabase,
+    trimmedListing,
+    requestRow.id,
+    trimmedSeeker,
+    expectedReqRaw,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const unblockGate = await gateOwnerUnblockSeekerPeer(supabase, user.id, trimmedSeeker);
+  if (!unblockGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { data: deletedBlocks, error } = await supabase
+    .from("user_blocks")
+    .delete()
+    .eq("blocker_id", user.id)
+    .eq("blocked_id", trimmedSeeker)
+    .select("blocker_id");
+
+  if (error) {
+    return { ok: false, message: "Не вдалося розблокувати користувача. Спробуйте ще раз." };
+  }
+  if (!deletedBlocks?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmedListing}/requests`);
+  return { ok: true };
+}
+
 export async function updateMyListingStatusAction(
   listingId: string,
   isActive: boolean,
@@ -1661,7 +2109,7 @@ export async function deleteMyListingAction(
 export async function ownerRespondToListingRequestAction(
   listingId: string,
   requestId: string,
-  decision: "accepted" | "rejected",
+  decision: "accepted" | "rejected" | "pending",
   expectedRequestUpdatedAt: string,
 ): Promise<OwnerRespondToListingRequestResult> {
   const supabase = await createClient();
@@ -1708,11 +2156,20 @@ export async function ownerRespondToListingRequestAction(
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  if (reqRow.status !== "pending") {
+  const st = reqRow.status;
+  if (st !== "pending" && st !== "accepted" && st !== "rejected") {
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  const ownerGate = await gateListingPeerInteraction(supabase, user.id, reqRow.initiator_id);
+  const transitionOk =
+    (decision === "accepted" && (st === "pending" || st === "rejected")) ||
+    (decision === "rejected" && (st === "pending" || st === "accepted")) ||
+    (decision === "pending" && st === "rejected");
+  if (!transitionOk) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const ownerGate = await gateListingPeerInteraction(supabase, user.id, reqRow.initiator_id, "strict");
   if (!ownerGate.ok) {
     return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
   }
@@ -1723,7 +2180,7 @@ export async function ownerRespondToListingRequestAction(
     .eq("id", trimmedRequestId)
     .eq("listing_id", trimmedListingId)
     .eq("updated_at", expectedReq)
-    .eq("status", "pending")
+    .eq("status", st)
     .select("id");
 
   if (updateError) {
@@ -1734,6 +2191,7 @@ export async function ownerRespondToListingRequestAction(
   }
 
   revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmedListingId}/requests`);
   revalidatePath("/listings");
   return { ok: true };
 }
