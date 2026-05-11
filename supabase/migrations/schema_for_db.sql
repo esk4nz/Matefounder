@@ -29,6 +29,10 @@ drop function if exists public.set_updated_at() cascade;
 drop function if exists public.username_is_taken(text) cascade;
 drop function if exists public.admin_console_list_users(text, integer, integer) cascade;
 drop function if exists public.review_allowed_by_request(uuid, uuid) cascade;
+drop function if exists public.seeker_has_request_for_listing(uuid) cascade;
+drop function if exists public.seeker_has_accepted_request_for_listing(uuid) cascade;
+drop function if exists public.seeker_has_visibility_override_for_listing(uuid) cascade;
+drop function if exists public.seeker_may_select_listing_as_request_peer(uuid) cascade;
 drop function if exists public.get_accepted_contacts(uuid, uuid) cascade;
 
 -- regions, cities
@@ -321,7 +325,7 @@ $$;
 
 revoke all on function public.review_allowed_by_request(uuid, uuid) from public;
 
-create or replace function public.seeker_has_request_for_listing(p_listing_id uuid)
+create or replace function public.seeker_may_select_listing_as_request_peer(p_listing_id uuid)
 returns boolean
 language sql
 stable
@@ -331,13 +335,23 @@ as $$
   select exists (
     select 1
     from public.listing_requests lr
+    inner join public.listings l on l.id = lr.listing_id
     where lr.listing_id = p_listing_id
       and lr.initiator_id = auth.uid()
+      and (
+        lr.status = 'accepted'
+        or exists (
+          select 1
+          from public.user_blocks ub
+          where (ub.blocker_id = auth.uid() and ub.blocked_id = l.creator_id)
+             or (ub.blocker_id = l.creator_id and ub.blocked_id = auth.uid())
+        )
+      )
   );
 $$;
 
-revoke all on function public.seeker_has_request_for_listing(uuid) from public;
-grant execute on function public.seeker_has_request_for_listing(uuid) to authenticated;
+revoke all on function public.seeker_may_select_listing_as_request_peer(uuid) from public;
+grant execute on function public.seeker_may_select_listing_as_request_peer(uuid) to authenticated;
 
 create or replace function public.admin_console_list_users(
   p_search text,
@@ -652,7 +666,7 @@ create policy "listings_select_discovery"
     creator_id = auth.uid()
     or (
       creator_id <> auth.uid()
-      and public.seeker_has_request_for_listing(id)
+      and public.seeker_may_select_listing_as_request_peer(id)
       and exists (
         select 1 from public.profiles creator
         where creator.id = creator_id and not creator.is_blocked
@@ -724,7 +738,7 @@ create policy "listing_images_select_visible"
           l.creator_id = auth.uid()
           or (
             l.creator_id <> auth.uid()
-            and public.seeker_has_request_for_listing(l.id)
+            and public.seeker_may_select_listing_as_request_peer(l.id)
             and exists (
               select 1 from public.profiles creator
               where creator.id = l.creator_id and not creator.is_blocked
@@ -815,7 +829,7 @@ create policy "listing_required_tags_select_visible"
           l.creator_id = auth.uid()
           or (
             l.creator_id <> auth.uid()
-            and public.seeker_has_request_for_listing(l.id)
+            and public.seeker_may_select_listing_as_request_peer(l.id)
             and exists (
               select 1 from public.profiles creator
               where creator.id = l.creator_id and not creator.is_blocked
