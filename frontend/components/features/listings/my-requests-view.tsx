@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import {
   getMyRequestsAction,
@@ -45,7 +44,6 @@ export function MyRequestsView({ userId, initialListings }: MyRequestsViewProps)
   const [activeListingDetails, setActiveListingDetails] = useState<ListingDetailsPayload | null>(null);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
-  const router = useRouter();
   const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
   const [contactsPayload, setContactsPayload] = useState<{
     phone: string | null;
@@ -66,13 +64,9 @@ export function MyRequestsView({ userId, initialListings }: MyRequestsViewProps)
     setListings(initialListings);
   }, [initialListings]);
 
-  const handleSeekerActionIssue = useCallback(
-    (message: string) => {
-      setSyncWarning(message);
-      router.refresh();
-    },
-    [router],
-  );
+  const handleSeekerActionIssue = useCallback((message: string) => {
+    setSyncWarning(message);
+  }, []);
 
   const reloadMyRequestsList = useCallback(async (): Promise<
     { ok: true; listings: ListingCardModel[] } | { ok: false }
@@ -118,11 +112,11 @@ export function MyRequestsView({ userId, initialListings }: MyRequestsViewProps)
         } else if (detail.reason === "notFound") {
           setOpenListingId(null);
           setActiveListingDetails(null);
-          router.refresh();
+          setSyncWarning("Це оголошення більше недоступне. Оновіть сторінку за потреби.");
         }
       }
     },
-    [openListingId, reloadMyRequestsList, router],
+    [openListingId, reloadMyRequestsList],
   );
 
   const handleTabChange = useCallback(
@@ -156,7 +150,6 @@ export function MyRequestsView({ userId, initialListings }: MyRequestsViewProps)
             setOpenListingId(null);
             setActiveListingDetails(null);
             setSyncWarning("Це оголошення більше недоступне. Список оновлено.");
-            router.refresh();
           } else if (result.reason === "unauthenticated") {
             setOpenListingId(null);
             setActiveListingDetails(null);
@@ -184,7 +177,7 @@ export function MyRequestsView({ userId, initialListings }: MyRequestsViewProps)
     return () => {
       cancelled = true;
     };
-  }, [openListingId, router]);
+  }, [openListingId]);
 
   const emptyCopy = "Тут поки нічого немає.";
 

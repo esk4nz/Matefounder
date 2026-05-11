@@ -70,6 +70,10 @@ export type DeleteMyListingActionResult =
   | { ok: false; message: string }
   | { ok: true };
 
+export type OwnerRespondToListingRequestResult =
+  | { ok: false; message: string }
+  | { ok: true };
+
 const LISTING_DETAILS_SELECT = `
   id,
   title,
@@ -105,6 +109,58 @@ type SeekerBatchContext = {
 };
 
 const STALE_SEEKER_STATE_MESSAGE = "Дані застаріли. Оновіть сторінку та спробуйте ще раз.";
+const LISTING_PEER_BLOCKED_MESSAGE = "Оголошення більше недоступне. Будь ласка, оновіть сторінку.";
+
+async function gateListingPeerInteraction(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  actorId: string,
+  opponentId: string,
+): Promise<{ ok: true } | { ok: false }> {
+  const [
+    { data: opponentProfile },
+    { data: actorProfile },
+    { data: blockedByActor },
+    { data: blockedByOpponent },
+  ] = await Promise.all([
+    supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
+    supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", actorId).eq("blocked_id", opponentId).maybeSingle(),
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
+  ]);
+
+  if (actorProfile?.is_blocked === true || opponentProfile?.is_blocked === true) {
+    return { ok: false };
+  }
+
+  if (blockedByActor || blockedByOpponent) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
+
+async function gateUnblockListingAuthorPeer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  actorId: string,
+  opponentId: string,
+): Promise<{ ok: true } | { ok: false }> {
+  const [{ data: opponentProfile }, { data: actorProfile }, { data: blockedByOpponent }] =
+    await Promise.all([
+      supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
+      supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
+      supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
+    ]);
+
+  if (actorProfile?.is_blocked === true || opponentProfile?.is_blocked === true) {
+    return { ok: false };
+  }
+
+  if (blockedByOpponent) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
 
 async function assertSeekerRequestUpdatedAtMatches(
   supabase: Awaited<ReturnType<typeof createClient>>,
@@ -1204,7 +1260,7 @@ export async function createListingRequestAction(
     .maybeSingle();
 
   if (!listing || listing.creator_id === user.id) {
-    return { ok: false, message: "Оголошення недоступне." };
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
   }
 
   if (listing.updated_at !== expectedListingUpdatedAt) {
@@ -1212,13 +1268,9 @@ export async function createListingRequestAction(
   }
 
   const creatorId = listing.creator_id as string;
-  const [{ data: blockOut }, { data: blockIn }] = await Promise.all([
-    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", user.id).eq("blocked_id", creatorId).maybeSingle(),
-    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", creatorId).eq("blocked_id", user.id).maybeSingle(),
-  ]);
-
-  if (blockOut || blockIn) {
-    return { ok: false, message: "Оголошення більше недоступне." };
+  const peerGate = await gateListingPeerInteraction(supabase, user.id, creatorId);
+  if (!peerGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
   }
 
   const { error } = await supabase.from("listing_requests").insert({
@@ -1252,14 +1304,48 @@ export async function cancelListingRequestAction(
   }
 
   const trimmed = listingId.trim();
+  const expectedReq =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expectedReq) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: listingForGate } = await supabase
+    .from("listings")
+    .select("creator_id")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (!listingForGate || typeof listingForGate.creator_id !== "string") {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const cancelGate = await gateListingPeerInteraction(supabase, user.id, listingForGate.creator_id);
+  if (!cancelGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { data: pendingRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmed)
+    .eq("initiator_id", user.id)
+    .eq("status", "pending")
+    .eq("updated_at", expectedReq)
+    .maybeSingle();
+
+  if (!pendingRow || typeof pendingRow.id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
 
   const { data: deletedRows, error } = await supabase
     .from("listing_requests")
     .delete()
+    .eq("id", pendingRow.id)
     .eq("listing_id", trimmed)
     .eq("initiator_id", user.id)
     .eq("status", "pending")
-    .eq("updated_at", expectedRequestUpdatedAt)
+    .eq("updated_at", expectedReq)
     .select("id");
 
   if (error) {
@@ -1296,7 +1382,7 @@ export async function blockListingAuthorAction(
     .maybeSingle();
 
   if (!listing || listing.creator_id === user.id) {
-    return { ok: false, message: "Оголошення недоступне." };
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
   }
 
   if (listing.updated_at !== expectedListingUpdatedAt) {
@@ -1311,6 +1397,11 @@ export async function blockListingAuthorAction(
   );
   if (!requestFresh) {
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const blockGate = await gateListingPeerInteraction(supabase, user.id, listing.creator_id as string);
+  if (!blockGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
   }
 
   const { error } = await supabase.from("user_blocks").insert({
@@ -1354,7 +1445,7 @@ export async function unblockListingAuthorAction(
     .maybeSingle();
 
   if (!listing) {
-    return { ok: false, message: "Оголошення недоступне." };
+    return { ok: false, message: "Оголошення недоступне. Оновіть сторінку." };
   }
 
   if (listing.updated_at !== expectedListingUpdatedAt) {
@@ -1371,14 +1462,23 @@ export async function unblockListingAuthorAction(
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  const { error } = await supabase
+  const unblockGate = await gateUnblockListingAuthorPeer(supabase, user.id, listing.creator_id as string);
+  if (!unblockGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { data: deletedBlocks, error } = await supabase
     .from("user_blocks")
     .delete()
     .eq("blocker_id", user.id)
-    .eq("blocked_id", listing.creator_id);
+    .eq("blocked_id", listing.creator_id)
+    .select("blocker_id");
 
   if (error) {
     return { ok: false, message: "Не вдалося розблокувати користувача. Спробуйте ще раз." };
+  }
+  if (!deletedBlocks?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
   revalidatePath("/listings");
@@ -1403,7 +1503,7 @@ export async function getAcceptedContactsAction(
   const { data: listing } = await supabase.from("listings").select("creator_id").eq("id", trimmed).maybeSingle();
 
   if (!listing) {
-    return { ok: false, reason: "forbidden", message: "Оголошення недоступне." };
+    return { ok: false, reason: "forbidden", message: "Оголошення недоступне. Оновіть сторінку." };
   }
 
   const { data: acceptedRow } = await supabase
@@ -1417,6 +1517,11 @@ export async function getAcceptedContactsAction(
 
   if (!acceptedRow) {
     return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const contactsGate = await gateListingPeerInteraction(supabase, user.id, listing.creator_id as string);
+  if (!contactsGate.ok) {
+    return { ok: false, reason: "forbidden", message: LISTING_PEER_BLOCKED_MESSAGE };
   }
 
   const { data: rpcData, error } = await supabase.rpc("get_accepted_contacts", {
@@ -1550,5 +1655,85 @@ export async function deleteMyListingAction(
   }
 
   revalidatePath("/my-listings");
+  return { ok: true };
+}
+
+export async function ownerRespondToListingRequestAction(
+  listingId: string,
+  requestId: string,
+  decision: "accepted" | "rejected",
+  expectedRequestUpdatedAt: string,
+): Promise<OwnerRespondToListingRequestResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Оновіть сторінку та увійдіть повторно." };
+  }
+
+  const trimmedListingId = listingId.trim();
+  const trimmedRequestId = requestId.trim();
+  const expectedReq =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+
+  if (!trimmedListingId || !trimmedRequestId || !expectedReq) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: listingRow, error: listingError } = await supabase
+    .from("listings")
+    .select("id")
+    .eq("id", trimmedListingId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (listingError || !listingRow) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { data: reqRow, error: reqError } = await supabase
+    .from("listing_requests")
+    .select("initiator_id, status, updated_at")
+    .eq("id", trimmedRequestId)
+    .eq("listing_id", trimmedListingId)
+    .maybeSingle();
+
+  if (reqError || !reqRow || typeof reqRow.initiator_id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  if (reqRow.updated_at !== expectedReq) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  if (reqRow.status !== "pending") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const ownerGate = await gateListingPeerInteraction(supabase, user.id, reqRow.initiator_id);
+  if (!ownerGate.ok) {
+    return { ok: false, message: LISTING_PEER_BLOCKED_MESSAGE };
+  }
+
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("listing_requests")
+    .update({ status: decision })
+    .eq("id", trimmedRequestId)
+    .eq("listing_id", trimmedListingId)
+    .eq("updated_at", expectedReq)
+    .eq("status", "pending")
+    .select("id");
+
+  if (updateError) {
+    return { ok: false, message: "Не вдалося оновити заявку. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!updatedRows?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath("/listings");
   return { ok: true };
 }

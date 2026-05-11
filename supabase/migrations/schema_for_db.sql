@@ -184,12 +184,14 @@ create table public.reports (
   reporter_id uuid not null references public.profiles (id) on delete cascade,
   target_user_id uuid not null references public.profiles (id) on delete cascade,
   target_review_id bigint references public.reviews (id) on delete set null,
+  target_listing_id uuid references public.listings (id) on delete set null,
   reason text not null,
   status text not null default 'open'
     check (status in ('open', 'reviewed', 'dismissed'))
 );
 
 create index if not exists reports_status_idx on public.reports (status);
+create index if not exists reports_target_listing_id_idx on public.reports (target_listing_id);
 
 create table public.user_blocks (
   blocker_id uuid not null references public.profiles (id) on delete cascade,
@@ -439,6 +441,21 @@ begin
     raise exception 'Access denied';
   end if;
 
+  if exists (
+    select 1 from public.profiles p
+    where p.id = p_target_id and p.is_blocked
+  ) then
+    raise exception 'Access denied';
+  end if;
+
+  if exists (
+    select 1 from public.user_blocks ub
+    where (ub.blocker_id = v_caller and ub.blocked_id = p_target_id)
+       or (ub.blocker_id = p_target_id and ub.blocked_id = v_caller)
+  ) then
+    raise exception 'Access denied';
+  end if;
+
   return query
   select
     p.contact_phone,
@@ -452,6 +469,25 @@ $$;
 
 revoke all on function public.get_accepted_contacts(uuid, uuid) from public;
 grant execute on function public.get_accepted_contacts(uuid, uuid) to authenticated;
+
+create or replace function public.admin_get_reported_listing(p_listing_id uuid)
+returns setof public.listings
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select l.*
+  from public.listings l
+  where l.id = p_listing_id
+    and exists (
+      select 1 from public.profiles pr
+      where pr.id = auth.uid() and pr.is_admin is true
+    );
+$$;
+
+revoke all on function public.admin_get_reported_listing(uuid) from public;
+grant execute on function public.admin_get_reported_listing(uuid) to authenticated;
 
 -- RLS
 alter table public.regions enable row level security;
@@ -613,14 +649,14 @@ create policy "listings_select_discovery"
   on public.listings for select
   to authenticated
   using (
-    exists (
-      select 1 from public.profiles pr
-      where pr.id = auth.uid() and pr.is_admin
-    )
-    or creator_id = auth.uid()
+    creator_id = auth.uid()
     or (
       creator_id <> auth.uid()
       and public.seeker_has_request_for_listing(id)
+      and exists (
+        select 1 from public.profiles creator
+        where creator.id = creator_id and not creator.is_blocked
+      )
     )
     or (
       is_active = true
@@ -685,10 +721,37 @@ create policy "listing_images_select_visible"
       select 1 from public.listings l
       where l.id = listing_id
         and (
-          l.is_active = true
-          or l.creator_id = auth.uid()
-          or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
-          or public.seeker_has_request_for_listing(l.id)
+          l.creator_id = auth.uid()
+          or (
+            l.creator_id <> auth.uid()
+            and public.seeker_has_request_for_listing(l.id)
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+          )
+          or (
+            l.is_active = true
+            and exists (
+              select 1 from public.profiles viewer
+              where viewer.id = auth.uid() and not viewer.is_blocked
+            )
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+            and not exists (
+              select 1 from public.user_blocks ub
+              where (
+                ub.blocker_id = auth.uid()
+                and ub.blocked_id = l.creator_id
+              )
+              or (
+                ub.blocker_id = l.creator_id
+                and ub.blocked_id = auth.uid()
+              )
+            )
+          )
         )
     )
   );
@@ -749,10 +812,37 @@ create policy "listing_required_tags_select_visible"
       select 1 from public.listings l
       where l.id = listing_id
         and (
-          l.is_active = true
-          or l.creator_id = auth.uid()
-          or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
-          or public.seeker_has_request_for_listing(l.id)
+          l.creator_id = auth.uid()
+          or (
+            l.creator_id <> auth.uid()
+            and public.seeker_has_request_for_listing(l.id)
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+          )
+          or (
+            l.is_active = true
+            and exists (
+              select 1 from public.profiles viewer
+              where viewer.id = auth.uid() and not viewer.is_blocked
+            )
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+            and not exists (
+              select 1 from public.user_blocks ub
+              where (
+                ub.blocker_id = auth.uid()
+                and ub.blocked_id = l.creator_id
+              )
+              or (
+                ub.blocker_id = l.creator_id
+                and ub.blocked_id = auth.uid()
+              )
+            )
+          )
         )
     )
   );
@@ -810,10 +900,25 @@ create policy "listing_requests_select_initiator_or_creator"
   on public.listing_requests for select
   to authenticated
   using (
-    initiator_id = auth.uid()
-    or exists (
-      select 1 from public.listings l
-      where l.id = listing_id and l.creator_id = auth.uid()
+    (
+      initiator_id = auth.uid()
+      and exists (
+        select 1
+        from public.listings l
+        inner join public.profiles pc on pc.id = l.creator_id
+        where l.id = listing_id
+          and not pc.is_blocked
+      )
+    )
+    or (
+      exists (
+        select 1
+        from public.listings l
+        inner join public.profiles pi on pi.id = initiator_id
+        where l.id = listing_id
+          and l.creator_id = auth.uid()
+          and not pi.is_blocked
+      )
     )
   );
 
@@ -830,6 +935,13 @@ create policy "listing_requests_insert_initiator_not_blocked"
     and not exists (
       select 1 from public.listings l
       where l.id = listing_id and l.creator_id = auth.uid()
+    )
+    and exists (
+      select 1
+      from public.listings l
+      inner join public.profiles pc on pc.id = l.creator_id
+      where l.id = listing_id
+        and not pc.is_blocked
     )
   );
 

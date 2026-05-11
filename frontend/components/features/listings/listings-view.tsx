@@ -186,6 +186,7 @@ export function ListingsView({
 
   const refreshSeekerListing = useCallback(
     async (listingId: string) => {
+      await router.refresh();
       const result = await getPublicListingFreshDataAction(listingId);
       if (result.ok) {
         setListings((prev) => prev.map((card) => (card.id === listingId ? result.card : card)));
@@ -198,7 +199,6 @@ export function ListingsView({
         setOpenListingId((prev) => (prev === listingId ? null : prev));
         setActiveListingDetails(null);
         setSyncWarning("Це оголошення більше недоступне. Список оновлено.");
-        router.refresh();
       }
     },
     [router],
