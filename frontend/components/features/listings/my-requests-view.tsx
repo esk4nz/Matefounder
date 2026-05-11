@@ -112,7 +112,7 @@ export function MyRequestsView({ userId, initialListings }: MyRequestsViewProps)
         } else if (detail.reason === "notFound") {
           setOpenListingId(null);
           setActiveListingDetails(null);
-          setSyncWarning("Це оголошення більше недоступне. Оновіть сторінку за потреби.");
+          setSyncWarning("Це оголошення більше недоступне. Оновіть сторінку.");
         }
       }
     },
