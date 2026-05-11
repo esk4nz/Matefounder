@@ -1,11 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import {
   getPublicListingFreshDataAction,
   getPublicListingsAction,
 } from "@/app/actions/listings";
+import { AcceptedContactsDialog } from "@/components/features/listings/accepted-contacts-dialog";
+import { SeekerListingActions } from "@/components/features/listings/seeker-listing-actions";
+import { SeekerProfileCompletenessGate } from "@/components/features/listings/seeker-profile-completeness-gate";
 import {
   PROFILE_EXCLUSIVE_CATEGORIES,
   PROFILE_INTERESTS_CATEGORY,
@@ -47,8 +51,14 @@ const GENDER_FILTER_OPTIONS: { value: (typeof LISTING_GENDER_PREFERENCE_VALUES)[
 ];
 const MAX_LISTING_PRICE = 500000;
 
+export type ListingsSeekerProfileGate =
+  | { mode: "allowed" }
+  | { mode: "blocked"; missingFields: string[] }
+  | { mode: "error"; message: string };
+
 type ListingsViewProps = {
   userId: string;
+  seekerGate: ListingsSeekerProfileGate;
   initialListings: ListingCardModel[];
   initialTotal: number;
   regions: RegionOption[];
@@ -129,6 +139,7 @@ function buildFiltersPayload(args: {
 
 export function ListingsView({
   userId,
+  seekerGate,
   initialListings,
   initialTotal,
   regions,
@@ -153,8 +164,50 @@ export function ListingsView({
   const [activeListingDetails, setActiveListingDetails] = useState<ListingDetailsPayload | null>(null);
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
+  const router = useRouter();
+  const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
+  const [contactsPayload, setContactsPayload] = useState<{
+    phone: string | null;
+    telegram: string | null;
+    email: string | null;
+  } | null>(null);
   const activeListingTitle =
     openListingId ? (listings.find((listing) => listing.id === openListingId)?.title ?? null) : null;
+
+  const activeListingCard = openListingId ? (listings.find((listing) => listing.id === openListingId) ?? null) : null;
+
+  const handleSeekerActionIssue = useCallback(
+    (message: string) => {
+      setSyncWarning(message);
+      router.refresh();
+    },
+    [router],
+  );
+
+  const refreshSeekerListing = useCallback(
+    async (listingId: string) => {
+      await router.refresh();
+      const result = await getPublicListingFreshDataAction(listingId);
+      if (result.ok) {
+        setListings((prev) => prev.map((card) => (card.id === listingId ? result.card : card)));
+        setActiveListingDetails(result.details);
+        setSyncWarning(null);
+        return;
+      }
+      if (result.reason === "notFound") {
+        setListings((prev) => prev.filter((card) => card.id !== listingId));
+        setOpenListingId((prev) => (prev === listingId ? null : prev));
+        setActiveListingDetails(null);
+        setSyncWarning("Це оголошення більше недоступне. Список оновлено.");
+      }
+    },
+    [router],
+  );
+
+  useEffect(() => {
+    setListings(initialListings);
+    setTotal(initialTotal);
+  }, [initialListings, initialTotal]);
 
   const interestTags = useMemo(
     () => tags.filter((t) => t.category === PROFILE_INTERESTS_CATEGORY).sort((a, b) => a.label_uk.localeCompare(b.label_uk, "uk")),
@@ -259,6 +312,7 @@ export function ListingsView({
             setOpenListingId(null);
             setActiveListingDetails(null);
             setSyncWarning("Це оголошення більше недоступне. Список оновлено.");
+            router.refresh();
           } else if (result.reason === "unauthenticated") {
             setOpenListingId(null);
             setActiveListingDetails(null);
@@ -286,7 +340,7 @@ export function ListingsView({
     return () => {
       cancelled = true;
     };
-  }, [openListingId]);
+  }, [openListingId, router]);
 
   const toggleAuthorInterest = (tagId: number) => {
     setAuthorInterestIds((prev) => (prev.includes(tagId) ? prev.filter((id) => id !== tagId) : [...prev, tagId]));
@@ -356,6 +410,14 @@ export function ListingsView({
       })();
     });
   }, [startTransition]);
+
+  if (seekerGate.mode === "blocked") {
+    return <SeekerProfileCompletenessGate variant="incomplete" missingFields={seekerGate.missingFields} />;
+  }
+
+  if (seekerGate.mode === "error") {
+    return <SeekerProfileCompletenessGate variant="error" message={seekerGate.message} />;
+  }
 
   return (
     <section className="container mx-auto max-w-7xl px-6 py-12">
@@ -655,6 +717,17 @@ export function ListingsView({
                   listing={listing}
                   onView={() => setOpenListingId(listing.id)}
                   showStatusBadge={false}
+                  seekerActions={
+                    <SeekerListingActions
+                      listing={listing}
+                      onAfterMutation={refreshSeekerListing}
+                      onSeekerActionIssue={handleSeekerActionIssue}
+                      onContactsReceived={(payload) => {
+                        setContactsPayload(payload);
+                        setContactsDialogOpen(true);
+                      }}
+                    />
+                  }
                 />
               ))}
             </div>
@@ -673,6 +746,28 @@ export function ListingsView({
           }
         }}
         currentUserId={userId}
+        seekerFooter={
+          activeListingCard ? (
+            <SeekerListingActions
+              variant="modal"
+              listing={activeListingCard}
+              onAfterMutation={refreshSeekerListing}
+              onSeekerActionIssue={handleSeekerActionIssue}
+              onContactsReceived={(payload) => {
+                setContactsPayload(payload);
+                setContactsDialogOpen(true);
+              }}
+            />
+          ) : null
+        }
+      />
+
+      <AcceptedContactsDialog
+        open={contactsDialogOpen}
+        onOpenChange={setContactsDialogOpen}
+        phone={contactsPayload?.phone ?? null}
+        telegram={contactsPayload?.telegram ?? null}
+        email={contactsPayload?.email ?? null}
       />
     </section>
   );

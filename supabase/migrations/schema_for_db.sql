@@ -1,7 +1,7 @@
 create extension if not exists pgcrypto;
 create extension if not exists vector;
 
--- DROP: on_auth_user_created, storage policies (profile-images), таблиці, функції.
+-- DROP: on_auth_user_created, storage policies (profile-images).
 drop trigger if exists on_auth_user_created on auth.users;
 
 drop policy if exists "profile_images_public_read" on storage.objects;
@@ -12,9 +12,7 @@ drop policy if exists "profile_images_delete_own" on storage.objects;
 drop table if exists public.user_matches cascade;
 drop table if exists public.reports cascade;
 drop table if exists public.reviews cascade;
-drop table if exists public.chat_messages cascade;
-drop table if exists public.chat_participants cascade;
-drop table if exists public.chat_rooms cascade;
+drop table if exists public.listing_requests cascade;
 drop table if exists public.listing_required_tags cascade;
 drop table if exists public.listing_images cascade;
 drop table if exists public.listings cascade;
@@ -30,6 +28,12 @@ drop function if exists public.handle_new_user() cascade;
 drop function if exists public.set_updated_at() cascade;
 drop function if exists public.username_is_taken(text) cascade;
 drop function if exists public.admin_console_list_users(text, integer, integer) cascade;
+drop function if exists public.review_allowed_by_request(uuid, uuid) cascade;
+drop function if exists public.seeker_has_request_for_listing(uuid) cascade;
+drop function if exists public.seeker_has_accepted_request_for_listing(uuid) cascade;
+drop function if exists public.seeker_has_visibility_override_for_listing(uuid) cascade;
+drop function if exists public.seeker_may_select_listing_as_request_peer(uuid) cascade;
+drop function if exists public.get_accepted_contacts(uuid, uuid) cascade;
 
 -- regions, cities
 create table public.regions (
@@ -145,33 +149,25 @@ create table public.listing_required_tags (
 create index if not exists listing_required_tags_tag_id_idx
   on public.listing_required_tags (tag_id);
 
--- chat_rooms, chat_participants, chat_messages
-create table public.chat_rooms (
+-- listing_requests
+create table public.listing_requests (
   id uuid primary key default gen_random_uuid(),
-  is_accepted boolean not null default false,
-  created_at timestamptz not null default now()
+  listing_id uuid not null references public.listings (id) on delete cascade,
+  initiator_id uuid not null references public.profiles (id) on delete cascade,
+  status text not null default 'pending'
+    check (status in ('pending', 'accepted', 'rejected')),
+  similarity_score numeric
+    check (similarity_score is null or (similarity_score >= 0 and similarity_score <= 100)),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint listing_requests_unique_pair unique (listing_id, initiator_id)
 );
 
-create table public.chat_participants (
-  room_id uuid not null references public.chat_rooms (id) on delete cascade,
-  user_id uuid not null references public.profiles (id) on delete cascade,
-  is_hidden boolean not null default false,
-  primary key (room_id, user_id)
-);
+create index if not exists listing_requests_listing_idx
+  on public.listing_requests (listing_id);
 
-create index if not exists chat_participants_user_idx on public.chat_participants (user_id);
-
-create table public.chat_messages (
-  id bigint generated always as identity primary key,
-  room_id uuid not null references public.chat_rooms (id) on delete cascade,
-  sender_id uuid not null references public.profiles (id) on delete cascade,
-  body text not null
-    check (char_length(body) > 0 and char_length(body) <= 8000),
-  created_at timestamptz not null default now()
-);
-
-create index if not exists chat_messages_room_created_idx
-  on public.chat_messages (room_id, created_at desc);
+create index if not exists listing_requests_initiator_idx
+  on public.listing_requests (initiator_id);
 
 -- reviews, reports, user_blocks, user_matches
 create table public.reviews (
@@ -192,12 +188,14 @@ create table public.reports (
   reporter_id uuid not null references public.profiles (id) on delete cascade,
   target_user_id uuid not null references public.profiles (id) on delete cascade,
   target_review_id bigint references public.reviews (id) on delete set null,
+  target_listing_id uuid references public.listings (id) on delete set null,
   reason text not null,
   status text not null default 'open'
     check (status in ('open', 'reviewed', 'dismissed'))
 );
 
 create index if not exists reports_status_idx on public.reports (status);
+create index if not exists reports_target_listing_id_idx on public.reports (target_listing_id);
 
 create table public.user_blocks (
   blocker_id uuid not null references public.profiles (id) on delete cascade,
@@ -281,6 +279,10 @@ create trigger listings_set_updated_at
   before update on public.listings
   for each row execute procedure public.set_updated_at();
 
+create trigger listing_requests_set_updated_at
+  before update on public.listing_requests
+  for each row execute procedure public.set_updated_at();
+
 create or replace function public.username_is_taken(candidate text)
 returns boolean
 language sql
@@ -299,7 +301,7 @@ revoke all on function public.username_is_taken(text) from public;
 grant execute on function public.username_is_taken(text) to service_role;
 
 -- RLS reviews.insert
-create or replace function public.review_allowed_by_chat(
+create or replace function public.review_allowed_by_request(
   p_author uuid,
   p_target uuid
 )
@@ -311,17 +313,45 @@ set search_path = public
 as $$
   select exists (
     select 1
-    from public.chat_participants a
-    inner join public.chat_participants b
-      on a.room_id = b.room_id
-    inner join public.chat_rooms cr on cr.id = a.room_id
-    where a.user_id = p_author
-      and b.user_id = p_target
-      and cr.is_accepted = true
+    from public.listing_requests lr
+    inner join public.listings l on l.id = lr.listing_id
+    where lr.status = 'accepted'
+      and (
+        (lr.initiator_id = p_author and l.creator_id = p_target)
+        or (lr.initiator_id = p_target and l.creator_id = p_author)
+      )
   );
 $$;
 
-revoke all on function public.review_allowed_by_chat(uuid, uuid) from public;
+revoke all on function public.review_allowed_by_request(uuid, uuid) from public;
+
+create or replace function public.seeker_may_select_listing_as_request_peer(p_listing_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.listing_requests lr
+    inner join public.listings l on l.id = lr.listing_id
+    where lr.listing_id = p_listing_id
+      and lr.initiator_id = auth.uid()
+      and (
+        lr.status = 'accepted'
+        or exists (
+          select 1
+          from public.user_blocks ub
+          where (ub.blocker_id = auth.uid() and ub.blocked_id = l.creator_id)
+             or (ub.blocker_id = l.creator_id and ub.blocked_id = auth.uid())
+        )
+      )
+  );
+$$;
+
+revoke all on function public.seeker_may_select_listing_as_request_peer(uuid) from public;
+grant execute on function public.seeker_may_select_listing_as_request_peer(uuid) to authenticated;
 
 create or replace function public.admin_console_list_users(
   p_search text,
@@ -388,33 +418,90 @@ $$;
 revoke all on function public.admin_console_list_users(text, integer, integer) from public;
 grant execute on function public.admin_console_list_users(text, integer, integer) to authenticated;
 
--- chat_rooms.is_accepted: true, якщо у room_id більше 2 distinct sender_id у chat_messages.
-create or replace function public.check_chat_accepted()
-returns trigger
+-- Function for getting accepted contacts after accepted request.
+create or replace function public.get_accepted_contacts(
+  p_target_id uuid,
+  p_listing_id uuid
+)
+returns table (
+  phone text,
+  telegram text,
+  email text
+)
 language plpgsql
 security definer
 set search_path = public
 as $$
 declare
-  v_sender_count int;
+  v_caller uuid;
 begin
-  select count(distinct sender_id) into v_sender_count
-  from public.chat_messages
-  where room_id = new.room_id;
+  v_caller := auth.uid();
 
-  if v_sender_count >= 2 then
-    update public.chat_rooms
-    set is_accepted = true
-    where id = new.room_id and is_accepted = false;
+  if v_caller is null then
+    raise exception 'Access denied';
   end if;
 
-  return new;
+  if not exists (
+    select 1
+    from public.listing_requests lr
+    inner join public.listings l on l.id = lr.listing_id
+    where lr.listing_id = p_listing_id
+      and lr.status = 'accepted'
+      and (
+        (lr.initiator_id = v_caller and l.creator_id = p_target_id)
+        or (lr.initiator_id = p_target_id and l.creator_id = v_caller)
+      )
+  ) then
+    raise exception 'Access denied';
+  end if;
+
+  if exists (
+    select 1 from public.profiles p
+    where p.id = p_target_id and p.is_blocked
+  ) then
+    raise exception 'Access denied';
+  end if;
+
+  if exists (
+    select 1 from public.user_blocks ub
+    where (ub.blocker_id = v_caller and ub.blocked_id = p_target_id)
+       or (ub.blocker_id = p_target_id and ub.blocked_id = v_caller)
+  ) then
+    raise exception 'Access denied';
+  end if;
+
+  return query
+  select
+    p.contact_phone,
+    p.contact_telegram,
+    u.email::text
+  from public.profiles p
+  inner join auth.users u on u.id = p.id
+  where p.id = p_target_id;
 end;
 $$;
 
-create trigger on_chat_message_insert
-  after insert on public.chat_messages
-  for each row execute procedure public.check_chat_accepted();
+revoke all on function public.get_accepted_contacts(uuid, uuid) from public;
+grant execute on function public.get_accepted_contacts(uuid, uuid) to authenticated;
+
+create or replace function public.admin_get_reported_listing(p_listing_id uuid)
+returns setof public.listings
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select l.*
+  from public.listings l
+  where l.id = p_listing_id
+    and exists (
+      select 1 from public.profiles pr
+      where pr.id = auth.uid() and pr.is_admin is true
+    );
+$$;
+
+revoke all on function public.admin_get_reported_listing(uuid) from public;
+grant execute on function public.admin_get_reported_listing(uuid) to authenticated;
 
 -- RLS
 alter table public.regions enable row level security;
@@ -426,9 +513,7 @@ alter table public.profile_tags enable row level security;
 alter table public.listings enable row level security;
 alter table public.listing_images enable row level security;
 alter table public.listing_required_tags enable row level security;
-alter table public.chat_rooms enable row level security;
-alter table public.chat_participants enable row level security;
-alter table public.chat_messages enable row level security;
+alter table public.listing_requests enable row level security;
 alter table public.reviews enable row level security;
 alter table public.reports enable row level security;
 alter table public.user_blocks enable row level security;
@@ -475,6 +560,8 @@ create policy "profiles_select_discovery"
   on public.profiles for select
   to authenticated
   using (not is_blocked or id = auth.uid());
+
+revoke select (contact_phone, contact_telegram) on public.profiles from authenticated;
 
 revoke update on public.profiles from authenticated;
 grant update (
@@ -576,11 +663,15 @@ create policy "listings_select_discovery"
   on public.listings for select
   to authenticated
   using (
-    exists (
-      select 1 from public.profiles pr
-      where pr.id = auth.uid() and pr.is_admin
+    creator_id = auth.uid()
+    or (
+      creator_id <> auth.uid()
+      and public.seeker_may_select_listing_as_request_peer(id)
+      and exists (
+        select 1 from public.profiles creator
+        where creator.id = creator_id and not creator.is_blocked
+      )
     )
-    or creator_id = auth.uid()
     or (
       is_active = true
       and exists (
@@ -644,9 +735,37 @@ create policy "listing_images_select_visible"
       select 1 from public.listings l
       where l.id = listing_id
         and (
-          l.is_active = true
-          or l.creator_id = auth.uid()
-          or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+          l.creator_id = auth.uid()
+          or (
+            l.creator_id <> auth.uid()
+            and public.seeker_may_select_listing_as_request_peer(l.id)
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+          )
+          or (
+            l.is_active = true
+            and exists (
+              select 1 from public.profiles viewer
+              where viewer.id = auth.uid() and not viewer.is_blocked
+            )
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+            and not exists (
+              select 1 from public.user_blocks ub
+              where (
+                ub.blocker_id = auth.uid()
+                and ub.blocked_id = l.creator_id
+              )
+              or (
+                ub.blocker_id = l.creator_id
+                and ub.blocked_id = auth.uid()
+              )
+            )
+          )
         )
     )
   );
@@ -707,9 +826,37 @@ create policy "listing_required_tags_select_visible"
       select 1 from public.listings l
       where l.id = listing_id
         and (
-          l.is_active = true
-          or l.creator_id = auth.uid()
-          or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+          l.creator_id = auth.uid()
+          or (
+            l.creator_id <> auth.uid()
+            and public.seeker_may_select_listing_as_request_peer(l.id)
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+          )
+          or (
+            l.is_active = true
+            and exists (
+              select 1 from public.profiles viewer
+              where viewer.id = auth.uid() and not viewer.is_blocked
+            )
+            and exists (
+              select 1 from public.profiles creator
+              where creator.id = l.creator_id and not creator.is_blocked
+            )
+            and not exists (
+              select 1 from public.user_blocks ub
+              where (
+                ub.blocker_id = auth.uid()
+                and ub.blocked_id = l.creator_id
+              )
+              or (
+                ub.blocker_id = l.creator_id
+                and ub.blocked_id = auth.uid()
+              )
+            )
+          )
         )
     )
   );
@@ -761,97 +908,85 @@ create policy "listing_required_tags_delete_creator"
     )
   );
 
--- RLS chat_rooms, chat_participants, chat_messages
-drop policy if exists "chat_rooms_select_participant_or_admin" on public.chat_rooms;
-create policy "chat_rooms_select_participant_or_admin"
-  on public.chat_rooms for select
+-- RLS listing_requests
+drop policy if exists "listing_requests_select_initiator_or_creator" on public.listing_requests;
+create policy "listing_requests_select_initiator_or_creator"
+  on public.listing_requests for select
   to authenticated
   using (
-    exists (
-      select 1 from public.chat_participants cp
-      where cp.room_id = id and cp.user_id = auth.uid()
+    (
+      initiator_id = auth.uid()
+      and exists (
+        select 1
+        from public.listings l
+        inner join public.profiles pc on pc.id = l.creator_id
+        where l.id = listing_id
+          and not pc.is_blocked
+      )
     )
-    or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+    or (
+      exists (
+        select 1
+        from public.listings l
+        inner join public.profiles pi on pi.id = initiator_id
+        where l.id = listing_id
+          and l.creator_id = auth.uid()
+          and not pi.is_blocked
+      )
+    )
   );
 
-drop policy if exists "chat_rooms_insert_authenticated" on public.chat_rooms;
-create policy "chat_rooms_insert_authenticated"
-  on public.chat_rooms for insert
+drop policy if exists "listing_requests_insert_initiator_not_blocked" on public.listing_requests;
+create policy "listing_requests_insert_initiator_not_blocked"
+  on public.listing_requests for insert
   to authenticated
   with check (
-    not exists (
-      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
-    )
-  );
-
-drop policy if exists "chat_participants_select_participant_or_admin" on public.chat_participants;
-create policy "chat_participants_select_participant_or_admin"
-  on public.chat_participants for select
-  to authenticated
-  using (
-    exists (
-      select 1 from public.chat_participants cp2
-      where cp2.room_id = room_id and cp2.user_id = auth.uid()
-    )
-    or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
-  );
-
-drop policy if exists "chat_participants_insert_self_not_blocked" on public.chat_participants;
-create policy "chat_participants_insert_self_not_blocked"
-  on public.chat_participants for insert
-  to authenticated
-  with check (
-    user_id = auth.uid()
+    initiator_id = auth.uid()
     and not exists (
-      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+      select 1 from public.profiles p
+      where p.id = auth.uid() and p.is_blocked
+    )
+    and not exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
+    )
+    and exists (
+      select 1
+      from public.listings l
+      inner join public.profiles pc on pc.id = l.creator_id
+      where l.id = listing_id
+        and not pc.is_blocked
     )
   );
 
-drop policy if exists "chat_participants_update_self" on public.chat_participants;
-create policy "chat_participants_update_self"
-  on public.chat_participants for update
+drop policy if exists "listing_requests_update_creator" on public.listing_requests;
+create policy "listing_requests_update_creator"
+  on public.listing_requests for update
   to authenticated
   using (
-    user_id = auth.uid()
-    and exists (
-      select 1 from public.chat_participants cp2
-      where cp2.room_id = room_id and cp2.user_id = auth.uid()
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
     )
   )
   with check (
-    user_id = auth.uid()
-    and exists (
-      select 1 from public.chat_participants cp2
-      where cp2.room_id = room_id and cp2.user_id = auth.uid()
+    exists (
+      select 1 from public.listings l
+      where l.id = listing_id and l.creator_id = auth.uid()
     )
   );
 
-drop policy if exists "chat_messages_select_participant_or_admin" on public.chat_messages;
-create policy "chat_messages_select_participant_or_admin"
-  on public.chat_messages for select
+drop policy if exists "listing_requests_delete_initiator_pending" on public.listing_requests;
+create policy "listing_requests_delete_initiator_pending"
+  on public.listing_requests for delete
   to authenticated
   using (
-    exists (
-      select 1 from public.chat_participants cp
-      where cp.room_id = chat_messages.room_id and cp.user_id = auth.uid()
-    )
-    or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
+    initiator_id = auth.uid()
+    and status = 'pending'
   );
 
-drop policy if exists "chat_messages_insert_participant_not_blocked" on public.chat_messages;
-create policy "chat_messages_insert_participant_not_blocked"
-  on public.chat_messages for insert
-  to authenticated
-  with check (
-    sender_id = auth.uid()
-    and not exists (
-      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
-    )
-    and exists (
-      select 1 from public.chat_participants cp
-      where cp.room_id = room_id and cp.user_id = auth.uid()
-    )
-  );
+revoke update on public.listing_requests from authenticated;
+grant update (status) on public.listing_requests to authenticated;
 
 -- RLS reviews
 drop policy if exists "reviews_select_related" on public.reviews;
@@ -864,8 +999,8 @@ create policy "reviews_select_related"
     or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
   );
 
-drop policy if exists "reviews_insert_when_chat_accepted" on public.reviews;
-create policy "reviews_insert_when_chat_accepted"
+drop policy if exists "reviews_insert_when_request_accepted" on public.reviews;
+create policy "reviews_insert_when_request_accepted"
   on public.reviews for insert
   to authenticated
   with check (
@@ -873,7 +1008,7 @@ create policy "reviews_insert_when_chat_accepted"
     and not exists (
       select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
     )
-    and public.review_allowed_by_chat(author_id, target_id)
+    and public.review_allowed_by_request(author_id, target_id)
   );
 
 -- RLS reports
@@ -1056,7 +1191,7 @@ create policy "listing_images_delete_creator"
     and (storage.foldername(name))[1] = auth.uid()::text
   );
 
--- seed regions, cities (UA)
+-- seed regions, cities
 insert into public.regions (name) values
   ('Вінницька область'),
   ('Волинська область'),

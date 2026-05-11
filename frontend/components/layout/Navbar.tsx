@@ -24,7 +24,7 @@ export default async function Navbar() {
   }
 
   return (
-    <nav className="sticky top-0 z-50 w-full border-b border-blue-200 bg-[#D8E9FF]/90 backdrop-blur-md">
+    <nav className="sticky top-0 z-50 w-full border-b border-blue-200 bg-[#D8E9FF]">
       <div className="max-w-[1440px] mx-auto w-full flex min-h-[4.5rem] flex-wrap items-center justify-between gap-x-6 px-6 py-3">
         <div className="flex items-center gap-x-8 md:gap-x-12">
           <Link
@@ -50,6 +50,12 @@ export default async function Navbar() {
                   Мої оголошення
                 </Link>
                 <Link
+                  href="/my-requests"
+                  className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
+                >
+                  Мої заявки
+                </Link>
+                <Link
                   href={`/profile/${user.id}/reviews`}
                   className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
                 >
@@ -59,7 +65,11 @@ export default async function Navbar() {
             ) : null}
             <Link
               href="/how-it-works"
-              className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
+              className={
+                user?.id
+                  ? "hidden xl:inline text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
+                  : "text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
+              }
             >
               Як це працює
             </Link>

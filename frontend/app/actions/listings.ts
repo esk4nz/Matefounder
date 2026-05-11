@@ -9,11 +9,21 @@ import {
 } from "@/app/schemas/profile";
 import { createListingFormSchema, publicListingsFiltersSchema } from "../schemas/listings";
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
+import type {
+  GetIncomingRequestsActionResult,
+  OwnerIncomingRequestItem,
+} from "@/lib/listings/owner-incoming-request-types";
+import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-completeness";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
+import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
 import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
 import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
-import type { ListingDetailsPayload, ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
+import type {
+  ListingDetailsPayload,
+  ListingDetailsReviewSummary,
+  ListingRequestStatus,
+} from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
 
 export type { UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
@@ -39,15 +49,33 @@ export type MyListingFreshDataActionResult =
       card: ListingCardModel;
     };
 
+export type PublicListingFreshDataScope = "discovery" | "my-requests";
+
 export type PublicListingsActionResult =
   | { ok: false; reason: "unauthenticated" | "invalidFilters"; message?: string }
   | { ok: true; listings: ListingCardModel[]; total: number };
+
+export type MyRequestsActionResult =
+  | { ok: false; reason: "unauthenticated" | "unknown"; message?: string }
+  | { ok: true; listings: ListingCardModel[] };
+
+export type AcceptedContactsActionResult =
+  | { ok: false; reason: "unauthenticated" | "forbidden" | "unknown"; message?: string }
+  | { ok: true; phone: string | null; telegram: string | null; email: string | null };
+
+export type SimpleListingMutationResult =
+  | { ok: false; message: string }
+  | { ok: true };
 
 export type UpdateMyListingStatusActionResult =
   | { ok: false; message: string }
   | { ok: true; isActive: boolean; updatedAt: string };
 
 export type DeleteMyListingActionResult =
+  | { ok: false; message: string }
+  | { ok: true };
+
+export type OwnerRespondToListingRequestResult =
   | { ok: false; message: string }
   | { ok: true };
 
@@ -73,8 +101,222 @@ const LISTING_DETAILS_SELECT = `
     gender,
     bio,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
-  )
+  ),
+  listing_requests(count)
 `;
+
+type SeekerBatchContext = {
+  requestsByListingId: Map<
+    string,
+    { status: ListingRequestStatus; similarityScore: number | null; updatedAt: string }
+  >;
+  blockedByMe: Set<string>;
+  blockedByAuthor: Set<string>;
+};
+
+const STALE_SEEKER_STATE_MESSAGE = "Дані застаріли. Оновіть сторінку та спробуйте ще раз.";
+const LISTING_UNAVAILABLE_MESSAGE = "Оголошення більше недоступне. Будь ласка, оновіть сторінку.";
+
+type PeerGateFailureReason = "global_profile_block" | "peer_user_block";
+
+type PeerGateResult = { ok: true } | { ok: false; reason: PeerGateFailureReason };
+
+function messageForPeerGateFailure(gate: Extract<PeerGateResult, { ok: false }>): string {
+  if (gate.reason === "peer_user_block") {
+    return STALE_SEEKER_STATE_MESSAGE;
+  }
+  return LISTING_UNAVAILABLE_MESSAGE;
+}
+
+async function gateListingPeerInteraction(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  actorId: string,
+  opponentId: string,
+  _mode: "default" | "strict" = "default",
+): Promise<PeerGateResult> {
+  void _mode;
+  const [
+    { data: opponentProfile },
+    { data: actorProfile },
+    { data: blockedByActor },
+    { data: blockedByOpponent },
+  ] = await Promise.all([
+    supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
+    supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", actorId).eq("blocked_id", opponentId).maybeSingle(),
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
+  ]);
+
+  if (actorProfile?.is_blocked === true || opponentProfile?.is_blocked === true) {
+    return { ok: false, reason: "global_profile_block" };
+  }
+
+  if (blockedByActor || blockedByOpponent) {
+    return { ok: false, reason: "peer_user_block" };
+  }
+
+  return { ok: true };
+}
+
+async function gateUnblockListingAuthorPeer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  actorId: string,
+  opponentId: string,
+): Promise<{ ok: true } | { ok: false }> {
+  const [{ data: opponentProfile }, { data: actorProfile }, { data: blockedByOpponent }] =
+    await Promise.all([
+      supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
+      supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
+      supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
+    ]);
+
+  if (actorProfile?.is_blocked === true || opponentProfile?.is_blocked === true) {
+    return { ok: false };
+  }
+
+  if (blockedByOpponent) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
+
+async function assertSeekerRequestUpdatedAtMatches(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  listingId: string,
+  expectedRequestUpdatedAt: string | null | undefined,
+): Promise<boolean> {
+  const expected =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expected) {
+    return true;
+  }
+  const { data: reqRow } = await supabase
+    .from("listing_requests")
+    .select("updated_at")
+    .eq("listing_id", listingId)
+    .eq("initiator_id", userId)
+    .maybeSingle();
+  return typeof reqRow?.updated_at === "string" && reqRow.updated_at === expected;
+}
+
+async function assertOwnerListingRequestUpdatedAtMatches(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  listingId: string,
+  requestId: string,
+  seekerId: string,
+  expectedRequestUpdatedAt: string | null | undefined,
+): Promise<boolean> {
+  const expected =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expected) {
+    return true;
+  }
+  const { data: reqRow } = await supabase
+    .from("listing_requests")
+    .select("updated_at")
+    .eq("id", requestId)
+    .eq("listing_id", listingId)
+    .eq("initiator_id", seekerId)
+    .maybeSingle();
+  return typeof reqRow?.updated_at === "string" && reqRow.updated_at === expected;
+}
+
+async function loadSeekerBatchContext(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  listingIds: string[],
+): Promise<SeekerBatchContext> {
+  const uniqueIds = [...new Set(listingIds)].filter((id) => id.length > 0);
+  if (uniqueIds.length === 0) {
+    return {
+      requestsByListingId: new Map(),
+      blockedByMe: new Set(),
+      blockedByAuthor: new Set(),
+    };
+  }
+
+  const [reqRes, outRes, inRes] = await Promise.all([
+    supabase
+      .from("listing_requests")
+      .select("listing_id, status, similarity_score, updated_at")
+      .eq("initiator_id", userId)
+      .in("listing_id", uniqueIds),
+    supabase.from("user_blocks").select("blocked_id").eq("blocker_id", userId),
+    supabase.from("user_blocks").select("blocker_id").eq("blocked_id", userId),
+  ]);
+
+  const requestsByListingId = new Map<
+    string,
+    { status: ListingRequestStatus; similarityScore: number | null; updatedAt: string }
+  >();
+  for (const row of reqRes.data ?? []) {
+    const lid = typeof row.listing_id === "string" ? row.listing_id : "";
+    const st = row.status;
+    const updatedAtRaw = row.updated_at;
+    const updatedAt = typeof updatedAtRaw === "string" ? updatedAtRaw : "";
+    if (lid && updatedAt && (st === "pending" || st === "accepted" || st === "rejected")) {
+      const rawScore = row.similarity_score;
+      const rounded =
+        rawScore != null && rawScore !== ""
+          ? Math.round(Number(rawScore))
+          : null;
+      const similarityScore =
+        rounded != null && Number.isFinite(rounded) ? rounded : null;
+      requestsByListingId.set(lid, {
+        status: st,
+        similarityScore,
+        updatedAt,
+      });
+    }
+  }
+
+  const blockedByMe = new Set(
+    (outRes.data ?? []).map((r) => r.blocked_id).filter((id): id is string => typeof id === "string"),
+  );
+  const blockedByAuthor = new Set(
+    (inRes.data ?? []).map((r) => r.blocker_id).filter((id): id is string => typeof id === "string"),
+  );
+
+  return { requestsByListingId, blockedByMe, blockedByAuthor };
+}
+
+function applySeekerToListingCard(
+  row: ListingDetailsQueryRow,
+  detailsBase: ListingDetailsPayload,
+  ctx: SeekerBatchContext,
+): ListingCardModel {
+  const req = ctx.requestsByListingId.get(row.id);
+  const requestStatus = req?.status ?? null;
+  const requestUpdatedAt = req?.updatedAt ?? null;
+  const similarityScore = req?.similarityScore ?? null;
+  const isBlockedByMe = ctx.blockedByMe.has(row.creator_id);
+  const isBlockedByAuthor = ctx.blockedByAuthor.has(row.creator_id);
+
+  const details: ListingDetailsPayload = {
+    ...detailsBase,
+    similarityScore,
+    requestStatus,
+    isBlockedByMe,
+    isBlockedByAuthor,
+  };
+
+  return {
+    id: row.id,
+    title: row.title,
+    type: details.type,
+    isActive: typeof row.is_active === "boolean" ? row.is_active : true,
+    updatedAt: row.updated_at,
+    requestUpdatedAt,
+    firstImageUrl: details.imageUrls[0] ?? null,
+    similarityScore,
+    requestStatus,
+    isBlockedByMe,
+    isBlockedByAuthor,
+    details,
+  };
+}
 
 function joinUkrainianList(parts: string[]) {
   if (parts.length === 0) {
@@ -152,35 +394,11 @@ async function assertProfileReadyForListing(): Promise<ProfileReadyResult> {
     };
   }
 
-  const selectedTagIds = new Set((selectedTagRows ?? []).map((row) => row.tag_id));
-
-  const selectedRequiredCategories = new Set<string>();
-  for (const row of allTagRows) {
-    if (!selectedTagIds.has(row.id)) {
-      continue;
-    }
-    if (row.category !== "interests") {
-      selectedRequiredCategories.add(row.category);
-    }
-  }
-
-  const hasAllRequiredTagCategories = PROFILE_EXCLUSIVE_CATEGORIES.every((category) =>
-    selectedRequiredCategories.has(category),
-  );
-
-  const missingFields: string[] = [];
-  if (!profile.first_name?.trim()) {
-    missingFields.push("ім'я");
-  }
-  if (!profile.last_name?.trim()) {
-    missingFields.push("прізвище");
-  }
-  if (!profile.contact_phone?.trim()) {
-    missingFields.push("номер телефону");
-  }
-  if (!hasAllRequiredTagCategories) {
-    missingFields.push("обов'язкові теги профілю");
-  }
+  const missingFields = collectMissingSeekerProfileFields({
+    profile,
+    selectedTagIds: (selectedTagRows ?? []).map((row) => row.tag_id),
+    allTagRows,
+  });
 
   if (missingFields.length > 0) {
     return {
@@ -724,7 +942,13 @@ export async function getMyListingFreshDataAction(
       type: details.type,
       isActive: typeof row.is_active === "boolean" ? row.is_active : true,
       updatedAt: row.updated_at,
+      requestUpdatedAt: null,
       firstImageUrl: details.imageUrls[0] ?? null,
+      similarityScore: null,
+      requestStatus: null,
+      isBlockedByMe: false,
+      isBlockedByAuthor: false,
+      incomingRequestsCount: extractListingIncomingRequestsCount(row),
       details,
     },
   };
@@ -905,6 +1129,11 @@ export async function getPublicListingsAction(
   }
 
   const rows = listingRows ?? [];
+  const seekerCtx = await loadSeekerBatchContext(
+    supabase,
+    user.id,
+    rows.map((r) => (r as ListingDetailsQueryRow).id),
+  );
 
   const listings: ListingCardModel[] = rows.map((listingRow) => {
     const row = listingRow as ListingDetailsQueryRow;
@@ -912,18 +1141,7 @@ export async function getPublicListingsAction(
       supabase,
       reviewSummary: null,
     });
-    const similarityScore = 100;
-    const details = { ...detailsBase, similarityScore };
-    return {
-      id: row.id,
-      title: row.title,
-      type: details.type,
-      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
-      updatedAt: row.updated_at,
-      firstImageUrl: details.imageUrls[0] ?? null,
-      similarityScore,
-      details,
-    };
+    return applySeekerToListingCard(row, detailsBase, seekerCtx);
   });
 
   return {
@@ -935,6 +1153,7 @@ export async function getPublicListingsAction(
 
 export async function getPublicListingFreshDataAction(
   listingId: string,
+  options?: { scope?: PublicListingFreshDataScope },
 ): Promise<MyListingFreshDataActionResult> {
   const supabase = await createClient();
   const {
@@ -945,25 +1164,37 @@ export async function getPublicListingFreshDataAction(
     return { ok: false, reason: "unauthenticated" };
   }
 
-  const { data: blockRows } = await supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id);
-  const blocked = new Set(
-    (blockRows ?? []).map((row) => row.blocked_id).filter((id): id is string => typeof id === "string"),
-  );
+  const scope = options?.scope ?? "discovery";
+  const trimmedId = listingId.trim();
 
-  const { data: listingRow, error: listingError } = await supabase
-    .from("listings")
-    .select(LISTING_DETAILS_SELECT)
-    .eq("id", listingId.trim())
-    .eq("is_active", true)
-    .maybeSingle();
+  const listingQuery =
+    scope === "discovery"
+      ? supabase.from("listings").select(LISTING_DETAILS_SELECT).eq("id", trimmedId).eq("is_active", true).maybeSingle()
+      : supabase.from("listings").select(LISTING_DETAILS_SELECT).eq("id", trimmedId).maybeSingle();
+
+  const [{ data: outgoingBlocks }, { data: incomingBlocks }, { data: listingRow, error: listingError }] =
+    await Promise.all([
+      supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id),
+      supabase.from("user_blocks").select("blocker_id").eq("blocked_id", user.id),
+      listingQuery,
+    ]);
 
   if (listingError || !listingRow) {
     return { ok: false, reason: "notFound" };
   }
 
   const row = listingRow as ListingDetailsQueryRow;
-  if (blocked.has(row.creator_id)) {
-    return { ok: false, reason: "notFound" };
+
+  if (scope === "discovery") {
+    const blockedIds = new Set(
+      [
+        ...(outgoingBlocks ?? []).map((b) => b.blocked_id),
+        ...(incomingBlocks ?? []).map((b) => b.blocker_id),
+      ].filter((id): id is string => typeof id === "string" && id.length > 0),
+    );
+    if (blockedIds.has(row.creator_id)) {
+      return { ok: false, reason: "notFound" };
+    }
   }
 
   let reviewSummary: ListingDetailsReviewSummary | null = null;
@@ -983,23 +1214,802 @@ export async function getPublicListingFreshDataAction(
     supabase,
     reviewSummary,
   });
-  const similarityScore = row.creator_id !== user.id ? 100 : undefined;
-  const details = { ...detailsBase, similarityScore };
+
+  const seekerCtx = await loadSeekerBatchContext(supabase, user.id, [row.id]);
+  const card = applySeekerToListingCard(row, detailsBase, seekerCtx);
 
   return {
     ok: true,
-    details,
-    card: {
-      id: row.id,
-      title: row.title,
-      type: details.type,
-      isActive: typeof row.is_active === "boolean" ? row.is_active : true,
-      updatedAt: row.updated_at,
-      firstImageUrl: details.imageUrls[0] ?? null,
-      similarityScore,
-      details,
-    },
+    details: card.details,
+    card,
   };
+}
+
+export async function getMyRequestsAction(): Promise<MyRequestsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const { data: requestRows, error: reqError } = await supabase
+    .from("listing_requests")
+    .select("listing_id")
+    .eq("initiator_id", user.id);
+
+  if (reqError) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити заявки." };
+  }
+
+  const listingIds = [
+    ...new Set(
+      (requestRows ?? [])
+        .map((r) => r.listing_id)
+        .filter((id): id is string => typeof id === "string" && id.length > 0),
+    ),
+  ];
+
+  if (listingIds.length === 0) {
+    return { ok: true, listings: [] };
+  }
+
+  const { data: listingRows, error: listError } = await supabase
+    .from("listings")
+    .select(LISTING_DETAILS_SELECT)
+    .in("id", listingIds);
+
+  if (listError) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити оголошення." };
+  }
+
+  const visibleListingRows = listingRows ?? [];
+  if (visibleListingRows.length === 0) {
+    return { ok: true, listings: [] };
+  }
+
+  const seekerCtx = await loadSeekerBatchContext(
+    supabase,
+    user.id,
+    visibleListingRows.map((r) => (r as ListingDetailsQueryRow).id),
+  );
+
+  const listings: ListingCardModel[] = visibleListingRows.map((listingRow) => {
+    const row = listingRow as ListingDetailsQueryRow;
+    const detailsBase = buildListingDetailsPayload(row, {
+      supabase,
+      reviewSummary: null,
+    });
+    return applySeekerToListingCard(row, detailsBase, seekerCtx);
+  });
+
+  listings.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+
+  return { ok: true, listings };
+}
+
+export async function getIncomingRequestsAction(listingId: string): Promise<GetIncomingRequestsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated", message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing, error: listErr } = await supabase
+    .from("listings")
+    .select("id, title, updated_at")
+    .eq("id", trimmed)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (listErr || !listing || typeof listing.title !== "string" || typeof listing.updated_at !== "string") {
+    return {
+      ok: false,
+      reason: "forbidden",
+      message: "Оголошення недоступне або ви не є його автором.",
+    };
+  }
+
+  const { data: reqRows, error: reqErr } = await supabase
+    .from("listing_requests")
+    .select("id, initiator_id, status, updated_at, similarity_score")
+    .eq("listing_id", trimmed);
+
+  if (reqErr) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити заявки." };
+  }
+
+  const rows = reqRows ?? [];
+  if (rows.length === 0) {
+    return {
+      ok: true,
+      listingTitle: listing.title,
+      listingUpdatedAt: listing.updated_at,
+      requests: [],
+    };
+  }
+
+  const initiatorIds = [
+    ...new Set(
+      rows
+        .map((r) => (typeof r.initiator_id === "string" ? r.initiator_id : ""))
+        .filter((id) => id.length > 0),
+    ),
+  ];
+
+  const [profilesRes, myBlocksRes, blockedMeRes] = await Promise.all([
+    supabase.from("profiles").select("id, first_name, last_name, avatar_path").in("id", initiatorIds),
+    supabase.from("user_blocks").select("blocked_id").eq("blocker_id", user.id),
+    supabase.from("user_blocks").select("blocker_id").eq("blocked_id", user.id),
+  ]);
+
+  if (profilesRes.error) {
+    return { ok: false, reason: "unknown", message: "Не вдалося завантажити профілі заявників." };
+  }
+
+  const profileById = new Map<
+    string,
+    { first_name: string | null; last_name: string | null; avatar_path: string | null }
+  >();
+  for (const p of profilesRes.data ?? []) {
+    if (typeof p.id === "string") {
+      profileById.set(p.id, {
+        first_name: typeof p.first_name === "string" ? p.first_name : null,
+        last_name: typeof p.last_name === "string" ? p.last_name : null,
+        avatar_path: typeof p.avatar_path === "string" && p.avatar_path.length > 0 ? p.avatar_path : null,
+      });
+    }
+  }
+
+  const profileImageBucket = supabase.storage.from("profile-images");
+
+  const iBlockedSeekerIds = new Set(
+    (myBlocksRes.data ?? [])
+      .map((r) => r.blocked_id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+  const seekerIdsWhoBlockedMe = new Set(
+    (blockedMeRes.data ?? [])
+      .map((r) => r.blocker_id)
+      .filter((id): id is string => typeof id === "string"),
+  );
+
+  const requests: OwnerIncomingRequestItem[] = [];
+  for (const r of rows) {
+    const requestId = typeof r.id === "string" ? r.id : "";
+    const seekerId = typeof r.initiator_id === "string" ? r.initiator_id : "";
+    const st = r.status;
+    const updatedAt = typeof r.updated_at === "string" ? r.updated_at : "";
+    if (!requestId || !seekerId || !updatedAt) {
+      continue;
+    }
+    if (st !== "pending" && st !== "accepted" && st !== "rejected") {
+      continue;
+    }
+
+    const seekerBlockedMe = seekerIdsWhoBlockedMe.has(seekerId);
+    const iBlockedSeeker = iBlockedSeekerIds.has(seekerId);
+    if (seekerBlockedMe && !iBlockedSeeker) {
+      continue;
+    }
+
+    const prof = profileById.get(seekerId);
+    const seekerFirstName = prof?.first_name?.trim() || "Користувач";
+    const lastRaw = typeof prof?.last_name === "string" ? prof.last_name.trim() : "";
+    const seekerLastName = lastRaw.length > 0 ? lastRaw : null;
+    const seekerAvatarUrl =
+      prof?.avatar_path != null
+        ? profileImageBucket.getPublicUrl(prof.avatar_path).data.publicUrl
+        : null;
+
+    const rawScore = r.similarity_score;
+    const rounded = rawScore != null && rawScore !== "" ? Math.round(Number(rawScore)) : null;
+    const similarityScore = rounded != null && Number.isFinite(rounded) ? rounded : null;
+
+    requests.push({
+      requestId,
+      seekerId,
+      status: st,
+      requestUpdatedAt: updatedAt,
+      similarityScore,
+      seekerFirstName,
+      seekerLastName,
+      seekerAvatarUrl,
+      iBlockedSeeker,
+    });
+  }
+
+  requests.sort((a, b) => (a.requestUpdatedAt < b.requestUpdatedAt ? 1 : -1));
+
+  return {
+    ok: true,
+    listingTitle: listing.title,
+    listingUpdatedAt: listing.updated_at,
+    requests,
+  };
+}
+
+export async function createListingRequestAction(
+  listingId: string,
+  expectedListingUpdatedAt: string,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Увійдіть, щоб подати заявку." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at, is_active")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+  if (listing.creator_id === user.id) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+  if (listing.is_active === false) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const creatorId = listing.creator_id as string;
+  const peerGate = await gateListingPeerInteraction(supabase, user.id, creatorId);
+  if (!peerGate.ok) {
+    return { ok: false, message: messageForPeerGateFailure(peerGate) };
+  }
+
+  const { error } = await supabase.from("listing_requests").insert({
+    listing_id: trimmed,
+    initiator_id: user.id,
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      return { ok: false, message: "Заявку вже подано." };
+    }
+    return { ok: false, message: "Не вдалося подати заявку. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmed}/requests`);
+  return { ok: true };
+}
+
+export async function cancelListingRequestAction(
+  listingId: string,
+  expectedRequestUpdatedAt: string,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const expectedReq =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expectedReq) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: listingForGate } = await supabase
+    .from("listings")
+    .select("creator_id")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (listingForGate && typeof listingForGate.creator_id === "string") {
+    const cancelGate = await gateListingPeerInteraction(supabase, user.id, listingForGate.creator_id);
+    if (!cancelGate.ok) {
+      return { ok: false, message: messageForPeerGateFailure(cancelGate) };
+    }
+  }
+
+  const { error, count } = await supabase
+    .from("listing_requests")
+    .delete({ count: "exact" })
+    .eq("listing_id", trimmed)
+    .eq("initiator_id", user.id)
+    .eq("status", "pending")
+    .eq("updated_at", expectedReq);
+
+  if (error) {
+    return { ok: false, message: "Не вдалося скасувати заявку. Спробуйте ще раз." };
+  }
+  if (typeof count === "number" && count > 0) {
+    revalidatePath("/listings");
+    revalidatePath("/my-requests");
+    revalidatePath("/my-listings");
+    revalidatePath(`/my-listings/${trimmed}/requests`);
+    return { ok: true };
+  }
+
+  const { data: listingAfter } = await supabase.from("listings").select("id").eq("id", trimmed).maybeSingle();
+  if (!listingAfter) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+  return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+}
+
+export async function blockListingAuthorAction(
+  listingId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+  if (listing.creator_id === user.id) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertSeekerRequestUpdatedAtMatches(
+    supabase,
+    user.id,
+    trimmed,
+    expectedRequestUpdatedAt,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const blockGate = await gateListingPeerInteraction(supabase, user.id, listing.creator_id as string);
+  if (!blockGate.ok) {
+    return { ok: false, message: messageForPeerGateFailure(blockGate) };
+  }
+
+  const { error } = await supabase.from("user_blocks").insert({
+    blocker_id: user.id,
+    blocked_id: listing.creator_id,
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      revalidatePath("/listings");
+      revalidatePath("/my-requests");
+      return { ok: true };
+    }
+    return { ok: false, message: "Не вдалося заблокувати користувача. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  return { ok: true };
+}
+
+export async function unblockListingAuthorAction(
+  listingId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmed)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertSeekerRequestUpdatedAtMatches(
+    supabase,
+    user.id,
+    trimmed,
+    expectedRequestUpdatedAt,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const unblockGate = await gateUnblockListingAuthorPeer(supabase, user.id, listing.creator_id as string);
+  if (!unblockGate.ok) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: deletedBlocks, error } = await supabase
+    .from("user_blocks")
+    .delete()
+    .eq("blocker_id", user.id)
+    .eq("blocked_id", listing.creator_id)
+    .select("blocker_id");
+
+  if (error) {
+    return { ok: false, message: "Не вдалося розблокувати користувача. Спробуйте ще раз." };
+  }
+  if (!deletedBlocks?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  revalidatePath("/listings");
+  revalidatePath("/my-requests");
+  return { ok: true };
+}
+
+export async function getAcceptedContactsAction(
+  listingId: string,
+  expectedRequestUpdatedAt: string,
+): Promise<AcceptedContactsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const trimmed = listingId.trim();
+  const { data: listing } = await supabase.from("listings").select("creator_id").eq("id", trimmed).maybeSingle();
+
+  if (!listing) {
+    return { ok: false, reason: "forbidden", message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: acceptedRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmed)
+    .eq("initiator_id", user.id)
+    .eq("status", "accepted")
+    .eq("updated_at", expectedRequestUpdatedAt)
+    .maybeSingle();
+
+  if (!acceptedRow) {
+    return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const contactsGate = await gateListingPeerInteraction(supabase, user.id, listing.creator_id as string);
+  if (!contactsGate.ok) {
+    return { ok: false, reason: "forbidden", message: messageForPeerGateFailure(contactsGate) };
+  }
+
+  const { data: rpcData, error } = await supabase.rpc("get_accepted_contacts", {
+    p_target_id: listing.creator_id,
+    p_listing_id: trimmed,
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      reason: "forbidden",
+      message: "Немає доступу до контактів для цього оголошення.",
+    };
+  }
+
+  type RpcRow = { phone?: string | null; telegram?: string | null; email?: string | null };
+  const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as RpcRow | undefined;
+
+  return {
+    ok: true,
+    phone: row?.phone ?? null,
+    telegram: row?.telegram ?? null,
+    email: row?.email ?? null,
+  };
+}
+
+export async function getOwnerSeekerContactsAction(
+  listingId: string,
+  seekerId: string,
+  expectedRequestUpdatedAt: string,
+): Promise<AcceptedContactsActionResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, reason: "unauthenticated" };
+  }
+
+  const trimmedListing = listingId.trim();
+  const trimmedSeeker = seekerId.trim();
+  const expectedReq =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!trimmedListing || !trimmedSeeker || !expectedReq) {
+    return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id")
+    .eq("id", trimmedListing)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, reason: "forbidden", message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: acceptedRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmedListing)
+    .eq("initiator_id", trimmedSeeker)
+    .eq("status", "accepted")
+    .eq("updated_at", expectedReq)
+    .maybeSingle();
+
+  if (!acceptedRow) {
+    return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const contactsGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker, "strict");
+  if (!contactsGate.ok) {
+    return { ok: false, reason: "forbidden", message: messageForPeerGateFailure(contactsGate) };
+  }
+
+  const { data: rpcData, error } = await supabase.rpc("get_accepted_contacts", {
+    p_target_id: trimmedSeeker,
+    p_listing_id: trimmedListing,
+  });
+
+  if (error) {
+    return {
+      ok: false,
+      reason: "forbidden",
+      message: "Немає доступу до контактів для цієї заявки.",
+    };
+  }
+
+  type RpcRow = { phone?: string | null; telegram?: string | null; email?: string | null };
+  const row = (Array.isArray(rpcData) ? rpcData[0] : rpcData) as RpcRow | undefined;
+
+  return {
+    ok: true,
+    phone: row?.phone ?? null,
+    telegram: row?.telegram ?? null,
+    email: row?.email ?? null,
+  };
+}
+
+async function gateOwnerUnblockSeekerPeer(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  ownerId: string,
+  seekerId: string,
+): Promise<{ ok: true } | { ok: false }> {
+  const [{ data: seekerProfile }, { data: ownerProfile }] = await Promise.all([
+    supabase.from("profiles").select("is_blocked").eq("id", seekerId).maybeSingle(),
+    supabase.from("profiles").select("is_blocked").eq("id", ownerId).maybeSingle(),
+  ]);
+
+  if (ownerProfile?.is_blocked === true || seekerProfile?.is_blocked === true) {
+    return { ok: false };
+  }
+
+  return { ok: true };
+}
+
+export async function blockListingSeekerAction(
+  listingId: string,
+  seekerId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmedListing = listingId.trim();
+  const trimmedSeeker = seekerId.trim();
+  if (!trimmedListing || !trimmedSeeker) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmedListing)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (!listing || listing.creator_id !== user.id) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const expectedReqRaw =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expectedReqRaw) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: requestRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmedListing)
+    .eq("initiator_id", trimmedSeeker)
+    .maybeSingle();
+
+  if (!requestRow || typeof requestRow.id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertOwnerListingRequestUpdatedAtMatches(
+    supabase,
+    trimmedListing,
+    requestRow.id,
+    trimmedSeeker,
+    expectedReqRaw,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const blockGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker, "strict");
+  if (!blockGate.ok) {
+    return { ok: false, message: messageForPeerGateFailure(blockGate) };
+  }
+
+  const { error } = await supabase.from("user_blocks").insert({
+    blocker_id: user.id,
+    blocked_id: trimmedSeeker,
+  });
+
+  if (error) {
+    if (error.code === "23505") {
+      revalidatePath("/my-listings");
+      revalidatePath(`/my-listings/${trimmedListing}/requests`);
+      return { ok: true };
+    }
+    return { ok: false, message: "Не вдалося заблокувати користувача. Спробуйте ще раз." };
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmedListing}/requests`);
+  return { ok: true };
+}
+
+export async function unblockListingSeekerAction(
+  listingId: string,
+  seekerId: string,
+  expectedListingUpdatedAt: string,
+  expectedRequestUpdatedAt?: string | null,
+): Promise<SimpleListingMutationResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Увійдіть знову." };
+  }
+
+  const trimmedListing = listingId.trim();
+  const trimmedSeeker = seekerId.trim();
+  if (!trimmedListing || !trimmedSeeker) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: listing } = await supabase
+    .from("listings")
+    .select("creator_id, updated_at")
+    .eq("id", trimmedListing)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (!listing) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const expectedReqRaw =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+  if (!expectedReqRaw) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: requestRow } = await supabase
+    .from("listing_requests")
+    .select("id")
+    .eq("listing_id", trimmedListing)
+    .eq("initiator_id", trimmedSeeker)
+    .maybeSingle();
+
+  if (!requestRow || typeof requestRow.id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const requestFresh = await assertOwnerListingRequestUpdatedAtMatches(
+    supabase,
+    trimmedListing,
+    requestRow.id,
+    trimmedSeeker,
+    expectedReqRaw,
+  );
+  if (!requestFresh) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const unblockGate = await gateOwnerUnblockSeekerPeer(supabase, user.id, trimmedSeeker);
+  if (!unblockGate.ok) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: deletedBlocks, error } = await supabase
+    .from("user_blocks")
+    .delete()
+    .eq("blocker_id", user.id)
+    .eq("blocked_id", trimmedSeeker)
+    .select("blocker_id");
+
+  if (error) {
+    return { ok: false, message: "Не вдалося розблокувати користувача. Спробуйте ще раз." };
+  }
+  if (!deletedBlocks?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmedListing}/requests`);
+  return { ok: true };
 }
 
 export async function updateMyListingStatusAction(
@@ -1109,5 +2119,95 @@ export async function deleteMyListingAction(
   }
 
   revalidatePath("/my-listings");
+  return { ok: true };
+}
+
+export async function ownerRespondToListingRequestAction(
+  listingId: string,
+  requestId: string,
+  decision: "accepted" | "rejected" | "pending",
+  expectedRequestUpdatedAt: string,
+): Promise<OwnerRespondToListingRequestResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return { ok: false, message: "Сесія завершилася. Оновіть сторінку та увійдіть повторно." };
+  }
+
+  const trimmedListingId = listingId.trim();
+  const trimmedRequestId = requestId.trim();
+  const expectedReq =
+    typeof expectedRequestUpdatedAt === "string" ? expectedRequestUpdatedAt.trim() : "";
+
+  if (!trimmedListingId || !trimmedRequestId || !expectedReq) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const { data: listingRow, error: listingError } = await supabase
+    .from("listings")
+    .select("id")
+    .eq("id", trimmedListingId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
+
+  if (listingError || !listingRow) {
+    return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
+  }
+
+  const { data: reqRow, error: reqError } = await supabase
+    .from("listing_requests")
+    .select("initiator_id, status, updated_at")
+    .eq("id", trimmedRequestId)
+    .eq("listing_id", trimmedListingId)
+    .maybeSingle();
+
+  if (reqError || !reqRow || typeof reqRow.initiator_id !== "string") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  if (reqRow.updated_at !== expectedReq) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const st = reqRow.status;
+  if (st !== "pending" && st !== "accepted" && st !== "rejected") {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const transitionOk =
+    (decision === "accepted" && (st === "pending" || st === "rejected")) ||
+    (decision === "rejected" && (st === "pending" || st === "accepted")) ||
+    (decision === "pending" && st === "rejected");
+  if (!transitionOk) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  const ownerGate = await gateListingPeerInteraction(supabase, user.id, reqRow.initiator_id, "strict");
+  if (!ownerGate.ok) {
+    return { ok: false, message: messageForPeerGateFailure(ownerGate) };
+  }
+
+  const { data: updatedRows, error: updateError } = await supabase
+    .from("listing_requests")
+    .update({ status: decision })
+    .eq("id", trimmedRequestId)
+    .eq("listing_id", trimmedListingId)
+    .eq("updated_at", expectedReq)
+    .eq("status", st)
+    .select("id");
+
+  if (updateError) {
+    return { ok: false, message: "Не вдалося оновити заявку. Оновіть сторінку та спробуйте ще раз." };
+  }
+  if (!updatedRows?.length) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
+  }
+
+  revalidatePath("/my-listings");
+  revalidatePath(`/my-listings/${trimmedListingId}/requests`);
+  revalidatePath("/listings");
   return { ok: true };
 }

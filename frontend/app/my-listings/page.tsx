@@ -4,6 +4,7 @@ import type { MyListingCardModel } from "@/components/features/listings/my-listi
 import { MyListingsView } from "@/components/features/listings/my-listings-view";
 import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details-payload";
 import type { ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
+import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
 import { createClient } from "@/lib/supabase/server";
 
 const LISTING_DETAILS_SELECT = `
@@ -28,7 +29,8 @@ const LISTING_DETAILS_SELECT = `
     gender,
     bio,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
-  )
+  ),
+  listing_requests(count)
 `;
 
 export default async function MyListingsPage() {
@@ -72,7 +74,13 @@ export default async function MyListingsPage() {
       type: details.type,
       isActive: row.is_active,
       updatedAt: row.updated_at,
+      requestUpdatedAt: null,
       firstImageUrl,
+      similarityScore: null,
+      requestStatus: null,
+      isBlockedByMe: false,
+      isBlockedByAuthor: false,
+      incomingRequestsCount: extractListingIncomingRequestsCount(row),
       details,
     };
   });

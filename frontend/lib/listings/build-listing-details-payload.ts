@@ -67,6 +67,7 @@ export type ListingDetailsQueryRow = {
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }[]
     | null;
+  listing_requests?: { count: number }[] | null;
 };
 
 function unwrapCityRow(
@@ -217,5 +218,9 @@ export function buildListingDetailsPayload(
     authorByCategory: toExclusiveByCategory(authorProfileRows),
     authorInterests: toInterestTags(authorProfileRows),
     reviewSummary: opts.reviewSummary,
+    similarityScore: null,
+    requestStatus: null,
+    isBlockedByMe: false,
+    isBlockedByAuthor: false,
   };
 }

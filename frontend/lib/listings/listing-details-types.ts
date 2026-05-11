@@ -15,6 +15,8 @@ export type ListingDetailsExclusiveByCategory = Partial<
   Record<ProfileExclusiveTagCategory, ListingDetailsTag>
 >;
 
+export type ListingRequestStatus = "pending" | "accepted" | "rejected";
+
 export type ListingDetailsPayload = {
   id: string;
   title: string;
@@ -38,5 +40,8 @@ export type ListingDetailsPayload = {
   authorByCategory: ListingDetailsExclusiveByCategory;
   authorInterests: ListingDetailsTag[];
   reviewSummary: ListingDetailsReviewSummary | null;
-  similarityScore?: number | null;
+  similarityScore: number | null;
+  requestStatus: ListingRequestStatus | null;
+  isBlockedByMe: boolean;
+  isBlockedByAuthor: boolean;
 };
