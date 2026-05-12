@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   type NormalizedProfileValues,
+  PROFILE_INTERESTS_CATEGORY,
   PROFILE_TAG_CATALOG_CHANGED_MESSAGE,
   buildInitialTagFormState,
   createProfileFormSchema,
@@ -15,6 +16,11 @@ import {
   profilePasswordSchema,
   profileSetPasswordSchema,
 } from "@/app/schemas/profile";
+import {
+  EmptyProfileEmbeddingSourceError,
+  generateProfileEmbedding,
+} from "@/lib/openai/embeddings";
+import { refreshSimilarityScoresAfterProfileEmbeddingChange } from "@/lib/listings/sync-listing-request-similarity";
 import { isUsernameTaken } from "@/lib/auth/queries";
 import { userHasPassword } from "@/lib/auth/user";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
@@ -97,13 +103,23 @@ export async function updateProfileAction(
     return { ok: false, message: "Некоректні дані версії профілю. Оновіть сторінку." };
   }
 
-  const { data: currentProfile, error: profileError } = await supabase
-    .from("profiles")
-    .select("username, avatar_path, updated_at")
-    .eq("id", user.id)
-    .maybeSingle();
+  const [profileResult, profileTagsResult] = await Promise.all([
+    supabase
+      .from("profiles")
+      .select("username, avatar_path, updated_at, bio")
+      .eq("id", user.id)
+      .maybeSingle(),
+    supabase.from("profile_tags").select("tag_id").eq("profile_id", user.id),
+  ]);
+
+  const { data: currentProfile, error: profileError } = profileResult;
+  const { data: currentProfileTagRows, error: profileTagsError } = profileTagsResult;
 
   if (profileError || !currentProfile) {
+    return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
+  }
+
+  if (profileTagsError) {
     return { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" };
   }
 
@@ -191,18 +207,69 @@ export async function updateProfileAction(
     nextAvatarPath = nextPath;
   }
 
+  const interestIdSet = new Set(
+    allTagRows.filter((t) => t.category === PROFILE_INTERESTS_CATEGORY).map((t) => t.id),
+  );
+  const sortedCurrentInterestIds = (currentProfileTagRows ?? [])
+    .map((row) => row.tag_id)
+    .filter((id) => interestIdSet.has(id))
+    .sort((a, b) => a - b);
+  const sortedNextInterestIds = [...parsed.data.tagInterests].sort((a, b) => a - b);
+  const bioChanged = (currentProfile.bio ?? "").trim() !== parsed.data.bio;
+  const interestsChanged =
+    sortedCurrentInterestIds.length !== sortedNextInterestIds.length ||
+    sortedNextInterestIds.some((id, i) => sortedCurrentInterestIds[i] !== id);
+  const needsEmbeddingRefresh = bioChanged || interestsChanged;
+
+  let nextEmbedding: string | null | undefined;
+  if (needsEmbeddingRefresh) {
+    const interestLabels = allTagRows
+      .filter(
+        (t) =>
+          t.category === PROFILE_INTERESTS_CATEGORY && parsed.data.tagInterests.includes(t.id),
+      )
+      .sort((a, b) => a.id - b.id)
+      .map((t) => t.label_uk);
+    try {
+      const embedding = await generateProfileEmbedding(parsed.data.bio, interestLabels);
+      nextEmbedding = `[${embedding.join(",")}]`;
+    } catch (error) {
+      if (error instanceof EmptyProfileEmbeddingSourceError) {
+        nextEmbedding = null;
+      } else {
+        return { ok: false, message: "Не вдалося оновити пошуковий профіль. Спробуйте пізніше." };
+      }
+    }
+  }
+
+  const profileUpdatePayload: {
+    username: string;
+    first_name: string;
+    last_name: string;
+    bio: string;
+    gender: "male" | "female";
+    contact_phone: string;
+    contact_telegram: string | null;
+    avatar_path: string | null;
+    embedding?: string | null;
+  } = {
+    username: parsed.data.username.trim(),
+    first_name: parsed.data.firstName.trim(),
+    last_name: parsed.data.lastName.trim(),
+    bio: parsed.data.bio,
+    gender: parsed.data.gender,
+    contact_phone: parsed.data.contactPhone,
+    contact_telegram: parsed.data.contactTelegram || null,
+    avatar_path: nextAvatarPath,
+  };
+
+  if (needsEmbeddingRefresh) {
+    profileUpdatePayload.embedding = nextEmbedding ?? null;
+  }
+
   const { data: updatedProfileRows, error: profileUpdateError } = await supabase
     .from("profiles")
-    .update({
-      username: parsed.data.username.trim(),
-      first_name: parsed.data.firstName.trim(),
-      last_name: parsed.data.lastName.trim(),
-      bio: parsed.data.bio,
-      gender: parsed.data.gender,
-      contact_phone: parsed.data.contactPhone,
-      contact_telegram: parsed.data.contactTelegram || null,
-      avatar_path: nextAvatarPath,
-    })
+    .update(profileUpdatePayload)
     .eq("id", user.id)
     .eq("updated_at", expectedUpdatedAt)
     .select("updated_at");
@@ -234,6 +301,14 @@ export async function updateProfileAction(
 
     if (insertTagsError) {
       return { ok: false, message: "Не вдалося зберегти теги профілю." };
+    }
+  }
+
+  if (needsEmbeddingRefresh) {
+    try {
+      await refreshSimilarityScoresAfterProfileEmbeddingChange(user.id);
+    } catch (e) {
+      console.error("[listing_request_similarity] after_profile_embedding", e);
     }
   }
 
