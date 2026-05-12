@@ -1528,3 +1528,275 @@ insert into public.tags (category_id, slug, label_uk) values
   ((select id from public.tag_categories where name = 'Інтереси'), 'int_art', '🎨 Мистецтво / Дизайн'),
   ((select id from public.tag_categories where name = 'Інтереси'), 'int_travel', '✈️ Подорожі'),
   ((select id from public.tag_categories where name = 'Інтереси'), 'int_books', '📚 Читання');
+
+-- Match score functions
+drop function if exists public.calculate_batch_match_scores(uuid, uuid[]);
+drop function if exists public.calculate_match_score(uuid, uuid);
+
+create or replace function public.calculate_match_score(
+  p_seeker_id uuid,
+  p_listing_id uuid
+)
+returns integer
+language plpgsql
+stable
+set search_path = public
+as $$
+declare
+  v_listing_gender_preference text;
+  v_seeker_gender text;
+  v_listing_pets text;
+  v_seeker_pets text;
+  v_listing_smoke text;
+  v_seeker_smoke text;
+  v_listing_guests text;
+  v_seeker_guests text;
+  v_listing_sleep text;
+  v_seeker_sleep text;
+  v_pets numeric := 0;
+  v_smoke numeric := 0;
+  v_guests numeric := 0;
+  v_sleep numeric := 0;
+  v_tags numeric := 0;
+  v_seeker_emb public.profiles.embedding%type;
+  v_author_emb public.profiles.embedding%type;
+  v_author_id uuid;
+  v_cosine double precision;
+  v_vector_score numeric := 0;
+begin
+  if auth.uid() is null or p_seeker_id is distinct from auth.uid() then
+    return 0;
+  end if;
+
+  select l.gender_preference into v_listing_gender_preference
+  from public.listings l
+  where l.id = p_listing_id;
+
+  select p.gender into v_seeker_gender
+  from public.profiles p
+  where p.id = p_seeker_id;
+
+  if v_listing_gender_preference = 'male' and v_seeker_gender is distinct from 'male' then
+    return 0;
+  end if;
+
+  if v_listing_gender_preference = 'female' and v_seeker_gender is distinct from 'female' then
+    return 0;
+  end if;
+
+  select t.slug into v_listing_pets
+  from public.listing_required_tags lrt
+  inner join public.tags t on t.id = lrt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where lrt.listing_id = p_listing_id
+    and tc.name = 'Тварини'
+  limit 1;
+
+  select t.slug into v_seeker_pets
+  from public.profile_tags pt
+  inner join public.tags t on t.id = pt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where pt.profile_id = p_seeker_id
+    and tc.name = 'Тварини'
+  limit 1;
+
+  select t.slug into v_listing_smoke
+  from public.listing_required_tags lrt
+  inner join public.tags t on t.id = lrt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where lrt.listing_id = p_listing_id
+    and tc.name = 'Звички'
+  limit 1;
+
+  select t.slug into v_seeker_smoke
+  from public.profile_tags pt
+  inner join public.tags t on t.id = pt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where pt.profile_id = p_seeker_id
+    and tc.name = 'Звички'
+  limit 1;
+
+  select t.slug into v_listing_guests
+  from public.listing_required_tags lrt
+  inner join public.tags t on t.id = lrt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where lrt.listing_id = p_listing_id
+    and tc.name = 'Соціальність'
+  limit 1;
+
+  select t.slug into v_seeker_guests
+  from public.profile_tags pt
+  inner join public.tags t on t.id = pt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where pt.profile_id = p_seeker_id
+    and tc.name = 'Соціальність'
+  limit 1;
+
+  select t.slug into v_listing_sleep
+  from public.listing_required_tags lrt
+  inner join public.tags t on t.id = lrt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where lrt.listing_id = p_listing_id
+    and tc.name = 'Режим'
+  limit 1;
+
+  select t.slug into v_seeker_sleep
+  from public.profile_tags pt
+  inner join public.tags t on t.id = pt.tag_id
+  inner join public.tag_categories tc on tc.id = t.category_id
+  where pt.profile_id = p_seeker_id
+    and tc.name = 'Режим'
+  limit 1;
+
+  if v_listing_pets is not null and v_seeker_pets is not null then
+    if v_listing_pets = 'has_pet' and v_seeker_pets = 'has_pet' then
+      v_pets := 25;
+    elsif v_listing_pets = 'has_pet' and v_seeker_pets = 'pets_ok' then
+      v_pets := 0;
+    elsif v_listing_pets = 'has_pet' and v_seeker_pets = 'pets_no' then
+      return 0;
+    elsif v_listing_pets = 'pets_ok' and v_seeker_pets = 'has_pet' then
+      v_pets := 15;
+    elsif v_listing_pets = 'pets_ok' and v_seeker_pets = 'pets_ok' then
+      v_pets := 25;
+    elsif v_listing_pets = 'pets_ok' and v_seeker_pets = 'pets_no' then
+      v_pets := 0;
+    elsif v_listing_pets = 'pets_no' and v_seeker_pets = 'has_pet' then
+      return 0;
+    elsif v_listing_pets = 'pets_no' and v_seeker_pets = 'pets_ok' then
+      v_pets := 10;
+    elsif v_listing_pets = 'pets_no' and v_seeker_pets = 'pets_no' then
+      v_pets := 25;
+    else
+      v_pets := 0;
+    end if;
+  end if;
+
+  if v_listing_smoke is not null and v_seeker_smoke is not null then
+    if v_listing_smoke = 'smoke_yes' and v_seeker_smoke = 'smoke_yes' then
+      v_smoke := 25;
+    elsif v_listing_smoke = 'smoke_yes' and v_seeker_smoke = 'smoke_sometimes' then
+      v_smoke := 18;
+    elsif v_listing_smoke = 'smoke_yes' and v_seeker_smoke = 'smoke_no' then
+      return 0;
+    elsif v_listing_smoke = 'smoke_sometimes' and v_seeker_smoke = 'smoke_yes' then
+      v_smoke := 12;
+    elsif v_listing_smoke = 'smoke_sometimes' and v_seeker_smoke = 'smoke_sometimes' then
+      v_smoke := 25;
+    elsif v_listing_smoke = 'smoke_sometimes' and v_seeker_smoke = 'smoke_no' then
+      return 0;
+    elsif v_listing_smoke = 'smoke_no' and v_seeker_smoke = 'smoke_yes' then
+      return 0;
+    elsif v_listing_smoke = 'smoke_no' and v_seeker_smoke = 'smoke_sometimes' then
+      return 0;
+    elsif v_listing_smoke = 'smoke_no' and v_seeker_smoke = 'smoke_no' then
+      v_smoke := 25;
+    else
+      v_smoke := 0;
+    end if;
+  end if;
+
+  if v_listing_guests is not null and v_seeker_guests is not null then
+    if v_listing_guests = 'guests_none' and v_seeker_guests = 'guests_none' then
+      v_guests := 20;
+    elsif v_listing_guests = 'guests_none' and v_seeker_guests = 'guests_rare' then
+      return 0;
+    elsif v_listing_guests = 'guests_none' and v_seeker_guests = 'guests_party' then
+      return 0;
+    elsif v_listing_guests = 'guests_rare' and v_seeker_guests = 'guests_none' then
+      v_guests := 0;
+    elsif v_listing_guests = 'guests_rare' and v_seeker_guests = 'guests_rare' then
+      v_guests := 20;
+    elsif v_listing_guests = 'guests_rare' and v_seeker_guests = 'guests_party' then
+      v_guests := 12;
+    elsif v_listing_guests = 'guests_party' and v_seeker_guests = 'guests_none' then
+      return 0;
+    elsif v_listing_guests = 'guests_party' and v_seeker_guests = 'guests_rare' then
+      v_guests := 12;
+    elsif v_listing_guests = 'guests_party' and v_seeker_guests = 'guests_party' then
+      v_guests := 20;
+    else
+      v_guests := 0;
+    end if;
+  end if;
+
+  if v_listing_sleep is not null and v_seeker_sleep is not null then
+    if v_listing_sleep = 'sleep_early' and v_seeker_sleep = 'sleep_early' then
+      v_sleep := 10;
+    elsif v_listing_sleep = 'sleep_early' and v_seeker_sleep = 'sleep_late' then
+      v_sleep := 0;
+    elsif v_listing_sleep = 'sleep_early' and v_seeker_sleep = 'sleep_flexible' then
+      v_sleep := 5;
+    elsif v_listing_sleep = 'sleep_late' and v_seeker_sleep = 'sleep_early' then
+      v_sleep := 0;
+    elsif v_listing_sleep = 'sleep_late' and v_seeker_sleep = 'sleep_late' then
+      v_sleep := 10;
+    elsif v_listing_sleep = 'sleep_late' and v_seeker_sleep = 'sleep_flexible' then
+      v_sleep := 5;
+    elsif v_listing_sleep = 'sleep_flexible' and v_seeker_sleep = 'sleep_early' then
+      v_sleep := 5;
+    elsif v_listing_sleep = 'sleep_flexible' and v_seeker_sleep = 'sleep_late' then
+      v_sleep := 5;
+    elsif v_listing_sleep = 'sleep_flexible' and v_seeker_sleep = 'sleep_flexible' then
+      v_sleep := 10;
+    else
+      v_sleep := 0;
+    end if;
+  end if;
+
+  v_tags := v_pets + v_smoke + v_guests + v_sleep;
+
+  select p.embedding into v_seeker_emb
+  from public.profiles p
+  where p.id = p_seeker_id;
+
+  select l.creator_id into v_author_id
+  from public.listings l
+  where l.id = p_listing_id;
+
+  if v_author_id is not null then
+    select p.embedding into v_author_emb
+    from public.profiles p
+    where p.id = v_author_id;
+  end if;
+
+  if v_seeker_emb is not null and v_author_emb is not null then
+    v_cosine := 1::double precision - (v_seeker_emb <=> v_author_emb);
+    v_vector_score := least(
+      20.0::numeric,
+      greatest(
+        0.0::numeric,
+        ((v_cosine::numeric - 0.50::numeric) / (0.93::numeric - 0.50::numeric)) * 20.0::numeric
+      )
+    );
+  else
+    v_vector_score := 0;
+  end if;
+
+  return round(v_tags + v_vector_score)::integer;
+end;
+$$;
+
+create or replace function public.calculate_batch_match_scores(
+  p_seeker_id uuid,
+  p_listing_ids uuid[]
+)
+returns table (
+  listing_id uuid,
+  match_score integer
+)
+language sql
+stable
+set search_path = public
+as $$
+  select
+    x.lid,
+    public.calculate_match_score(p_seeker_id, x.lid)
+  from unnest(p_listing_ids) as x(lid);
+$$;
+
+revoke all on function public.calculate_match_score(uuid, uuid) from public;
+revoke all on function public.calculate_batch_match_scores(uuid, uuid[]) from public;
+
+grant execute on function public.calculate_match_score(uuid, uuid) to authenticated;
+grant execute on function public.calculate_batch_match_scores(uuid, uuid[]) to authenticated;

@@ -101,7 +101,11 @@ export function SeekerListingActions({
           type="button"
           className={cn("h-9 bg-blue-600 px-4 hover:bg-blue-700", variant === "card" && "w-full")}
           disabled={busy}
-          onClick={() => wrap(() => createListingRequestAction(listing.id, listing.updatedAt))}
+          onClick={() =>
+            wrap(() =>
+              createListingRequestAction(listing.id, listing.updatedAt, listing.similarityScore ?? undefined),
+            )
+          }
         >
           Цікаво
         </Button>
