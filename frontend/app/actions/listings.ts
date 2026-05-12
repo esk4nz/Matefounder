@@ -17,7 +17,7 @@ import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-complet
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
-import { LISTING_MAX_PHOTOS } from "@/lib/listings/constants";
+import { LISTING_MAX_PHOTOS, PUBLIC_LISTINGS_PAGE_SIZE } from "@/lib/listings/constants";
 import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
 import type {
   ListingDetailsPayload,
@@ -1145,6 +1145,18 @@ export async function getPublicListingsAction(
     query = query.lte("price", filters.priceMax);
   }
 
+  const moveInFrom = filters.moveInFrom;
+  const moveInTo = filters.moveInTo;
+  if (moveInFrom && moveInTo) {
+    query = query
+      .lte("available_from", moveInTo)
+      .or(`available_until.is.null,available_until.gte.${moveInFrom}`);
+  } else if (moveInFrom) {
+    query = query.or(`available_until.is.null,available_until.gte.${moveInFrom}`);
+  } else if (moveInTo) {
+    query = query.lte("available_from", moveInTo);
+  }
+
   for (const blockedId of blockedIds) {
     query = query.neq("creator_id", blockedId);
   }
@@ -1155,9 +1167,13 @@ export async function getPublicListingsAction(
     query = query.in("creator_id", creatorIdRestriction);
   }
 
+  const page = filters.page;
+  const from = (page - 1) * PUBLIC_LISTINGS_PAGE_SIZE;
+  const to = from + PUBLIC_LISTINGS_PAGE_SIZE - 1;
+
   const { data: listingRows, error: listingsError, count } = await query
     .order("updated_at", { ascending: false })
-    .range(0, 49);
+    .range(from, to);
 
   if (listingsError) {
     return { ok: false, reason: "invalidFilters", message: "Не вдалося завантажити оголошення. Спробуйте ще раз." };

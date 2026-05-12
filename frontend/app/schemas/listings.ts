@@ -90,6 +90,21 @@ export function createListingFormSchema(allTags: readonly ProfileTagRow[]) {
         }
       }
 
+      const todayUtc = new Date().toISOString().slice(0, 10);
+      if (data.availableFrom < todayUtc) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["availableFrom"],
+          message: "Дата не може бути в минулому (UTC).",
+        });
+      }
+      if (data.availableUntil.length > 0 && data.availableUntil < todayUtc) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["availableUntil"],
+          message: "Дата не може бути в минулому (UTC).",
+        });
+      }
       if (data.availableUntil.length > 0 && data.availableUntil < data.availableFrom) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -116,6 +131,16 @@ const optionalNonNegativeInt = z.preprocess((value) => {
   return value;
 }, z.number().int().min(0).max(500000).optional());
 
+const optionalMoveInIsoDate = z.preprocess((value) => {
+  if (value === "" || value === null || value === undefined) {
+    return undefined;
+  }
+  if (typeof value === "string" && value.trim() === "") {
+    return undefined;
+  }
+  return value;
+}, z.string().date().optional());
+
 const publicListingRequiredFiltersSchema = z
   .object({
     habits: z.array(z.number().int()).optional(),
@@ -127,6 +152,7 @@ const publicListingRequiredFiltersSchema = z
 
 export const publicListingsFiltersSchema = z
   .object({
+    page: z.coerce.number().int().min(1).default(1),
     type: z.enum(["offering", "searching"]).optional(),
     types: z.array(z.enum(["offering", "searching"])).optional(),
     cityId: z
@@ -143,6 +169,8 @@ export const publicListingsFiltersSchema = z
     authorGender: z.enum(["male", "female", "any"]).optional(),
     requiredTags: publicListingRequiredFiltersSchema,
     authorInterestTagIds: z.array(z.number().int()).optional(),
+    moveInFrom: optionalMoveInIsoDate,
+    moveInTo: optionalMoveInIsoDate,
   })
   .superRefine((data, ctx) => {
     if (data.cityId && data.cityIds?.length) {
@@ -168,6 +196,17 @@ export const publicListingsFiltersSchema = z
         code: z.ZodIssueCode.custom,
         path: ["types"],
         message: "Оберіть або один тип, або список типів.",
+      });
+    }
+    if (
+      typeof data.moveInFrom === "string" &&
+      typeof data.moveInTo === "string" &&
+      data.moveInTo < data.moveInFrom
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["moveInTo"],
+        message: "Дата «до» не може бути раніше за дату «від».",
       });
     }
   });
