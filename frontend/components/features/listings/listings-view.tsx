@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import {
   getPublicListingFreshDataAction,
@@ -27,6 +28,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { PUBLIC_LISTINGS_PAGE_SIZE } from "@/lib/listings/constants";
 import { cn } from "@/lib/utils";
 
 type RegionOption = { id: string; name: string };
@@ -61,10 +63,18 @@ type ListingsViewProps = {
   seekerGate: ListingsSeekerProfileGate;
   initialListings: ListingCardModel[];
   initialTotal: number;
+  initialPage: number;
   regions: RegionOption[];
   cities: CityOption[];
   tags: ProfileTagRow[];
 };
+
+function buildListingsListUrl(pathname: string, page: number): string {
+  if (page <= 1) {
+    return pathname;
+  }
+  return `${pathname}?page=${page}`;
+}
 
 function parseBudgetInput(raw: string): number | undefined {
   const trimmed = raw.trim();
@@ -142,12 +152,14 @@ export function ListingsView({
   seekerGate,
   initialListings,
   initialTotal,
+  initialPage,
   regions,
   cities,
   tags,
 }: ListingsViewProps) {
   const [listings, setListings] = useState(initialListings);
   const [total, setTotal] = useState(initialTotal);
+  const [filteredListPage, setFilteredListPage] = useState(1);
   const [lookingFor, setLookingFor] = useState<LookingForValue[]>([]);
   const [regionId, setRegionId] = useState("");
   const [cityId, setCityId] = useState("");
@@ -165,6 +177,7 @@ export function ListingsView({
   const [isDetailsLoading, setIsDetailsLoading] = useState(false);
   const [syncWarning, setSyncWarning] = useState<string | null>(null);
   const router = useRouter();
+  const pathname = usePathname();
   const [contactsDialogOpen, setContactsDialogOpen] = useState(false);
   const [contactsPayload, setContactsPayload] = useState<{
     phone: string | null;
@@ -229,26 +242,30 @@ export function ListingsView({
     [cities, regionId],
   );
 
+  const getCurrentListingsPayload = useCallback((): Record<string, unknown> => {
+    const regionCityIds =
+      regionId && !cityId.trim()
+        ? cities.filter((city) => city.region_id === regionId).map((city) => city.id)
+        : null;
+    return buildFiltersPayload({
+      types: LOOKING_FOR_OPTIONS.filter((option) => lookingFor.includes(option.value)).map((option) => option.listingType),
+      cityId,
+      regionCityIds,
+      priceMin,
+      priceMax,
+      authorGender,
+      requiredTags,
+      authorInterestIds,
+    });
+  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
+
   const applyFilters = useCallback(() => {
     startTransition(() => {
       void (async () => {
         setListError(null);
-        const regionCityIds =
-          regionId && !cityId.trim()
-            ? cities.filter((city) => city.region_id === regionId).map((city) => city.id)
-            : null;
-        const payload = buildFiltersPayload({
-          types: LOOKING_FOR_OPTIONS.filter((option) => lookingFor.includes(option.value)).map((option) => option.listingType),
-          cityId,
-          regionCityIds,
-          priceMin,
-          priceMax,
-          authorGender,
-          requiredTags,
-          authorInterestIds,
-        });
+        const payload = getCurrentListingsPayload();
         const payloadSignature = JSON.stringify(payload);
-        const result = await getPublicListingsAction(payload);
+        const result = await getPublicListingsAction({ ...payload, page: 1 });
         if (!result.ok) {
           if (result.reason === "unauthenticated") {
             setListError("Сесія завершилася. Оновіть сторінку та увійдіть знову.");
@@ -260,9 +277,13 @@ export function ListingsView({
         setListings(result.listings);
         setTotal(result.total);
         setLastAppliedFilterSignature(payloadSignature);
+        setFilteredListPage(1);
+        if (typeof window !== "undefined") {
+          window.history.replaceState(null, "", buildListingsListUrl(pathname, 1));
+        }
       })();
     });
-  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
+  }, [getCurrentListingsPayload, pathname]);
 
   const currentFilterSignature = useMemo(() => {
     const regionCityIds =
@@ -280,6 +301,22 @@ export function ListingsView({
     return JSON.stringify(payload);
   }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
   const hasPendingFilterChanges = currentFilterSignature !== lastAppliedFilterSignature;
+  const isDefaultFilters = lastAppliedFilterSignature === "{}";
+  const displayPage = isDefaultFilters ? initialPage : filteredListPage;
+  const totalPages = Math.max(1, Math.ceil(total / PUBLIC_LISTINGS_PAGE_SIZE));
+  const rangeStart =
+    total === 0
+      ? 0
+      : listings.length === 0
+        ? Math.min((displayPage - 1) * PUBLIC_LISTINGS_PAGE_SIZE + 1, total)
+        : (displayPage - 1) * PUBLIC_LISTINGS_PAGE_SIZE + 1;
+  const rangeEnd =
+    total === 0
+      ? 0
+      : listings.length === 0
+        ? total
+        : Math.min(total, (displayPage - 1) * PUBLIC_LISTINGS_PAGE_SIZE + listings.length);
+  const isNextDisabled = displayPage * PUBLIC_LISTINGS_PAGE_SIZE >= total;
   const sliderMinPercent = useMemo(() => {
     const minValue = parseBudgetInput(priceMin) ?? 0;
     return Math.max(0, Math.min(100, (minValue / MAX_LISTING_PRICE) * 100));
@@ -396,7 +433,7 @@ export function ListingsView({
         setListError(null);
         setLastAppliedFilterSignature("{}");
 
-        const result = await getPublicListingsAction({});
+        const result = await getPublicListingsAction({ page: 1 });
         if (!result.ok) {
           if (result.reason === "unauthenticated") {
             setListError("Сесія завершилася. Оновіть сторінку та увійдіть знову.");
@@ -407,9 +444,38 @@ export function ListingsView({
         }
         setListings(result.listings);
         setTotal(result.total);
+        setFilteredListPage(1);
+        router.replace(buildListingsListUrl(pathname, 1));
       })();
     });
-  }, [startTransition]);
+  }, [pathname, router, startTransition]);
+
+  const goFilteredPage = useCallback(
+    (nextPage: number) => {
+      startTransition(() => {
+        void (async () => {
+          setListError(null);
+          const payload = getCurrentListingsPayload();
+          const result = await getPublicListingsAction({ ...payload, page: nextPage });
+          if (!result.ok) {
+            if (result.reason === "unauthenticated") {
+              setListError("Сесія завершилася. Оновіть сторінку та увійдіть знову.");
+              return;
+            }
+            setListError(result.message ?? "Не вдалося завантажити сторінку списку.");
+            return;
+          }
+          setListings(result.listings);
+          setTotal(result.total);
+          setFilteredListPage(nextPage);
+          if (typeof window !== "undefined") {
+            window.history.replaceState(null, "", buildListingsListUrl(pathname, nextPage));
+          }
+        })();
+      });
+    },
+    [getCurrentListingsPayload, pathname, startTransition],
+  );
 
   if (seekerGate.mode === "blocked") {
     return <SeekerProfileCompletenessGate variant="incomplete" missingFields={seekerGate.missingFields} />;
@@ -699,8 +765,17 @@ export function ListingsView({
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
             <p className="text-sm text-slate-600">
               Знайдено: <span className="font-semibold text-slate-900">{total}</span>
-              {total > listings.length ? (
-                <span className="text-slate-500"> (показано перші {listings.length})</span>
+              {total > 0 ? (
+                <span className="text-slate-500">
+                  {" "}
+                  · Показано {rangeStart}–{rangeEnd}
+                  {totalPages > 1 ? (
+                    <>
+                      {" "}
+                      · Сторінка {displayPage} з {totalPages}
+                    </>
+                  ) : null}
+                </span>
               ) : null}
             </p>
           </div>
@@ -732,6 +807,60 @@ export function ListingsView({
               ))}
             </div>
           )}
+          {total > 0 ? (
+            <nav
+              className="mt-8 flex flex-wrap items-center justify-center gap-3 sm:justify-end"
+              aria-label="Пагінація оголошень"
+            >
+              {isDefaultFilters ? (
+                <>
+                  {initialPage <= 1 ? (
+                    <Button type="button" variant="outline" disabled className="min-w-[11rem]">
+                      Попередня
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" className="min-w-[11rem]" asChild>
+                      <Link href={buildListingsListUrl(pathname, initialPage - 1)}>Попередня</Link>
+                    </Button>
+                  )}
+                  {isNextDisabled ? (
+                    <Button type="button" variant="outline" disabled className="min-w-[11rem]">
+                      Наступна
+                    </Button>
+                  ) : (
+                    <Button type="button" variant="outline" className="min-w-[11rem]" asChild>
+                      <Link href={buildListingsListUrl(pathname, initialPage + 1)}>Наступна</Link>
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-w-[11rem]"
+                    disabled={filteredListPage <= 1 || isPending}
+                    onClick={() => {
+                      goFilteredPage(filteredListPage - 1);
+                    }}
+                  >
+                    Попередня
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-w-[11rem]"
+                    disabled={isNextDisabled || isPending}
+                    onClick={() => {
+                      goFilteredPage(filteredListPage + 1);
+                    }}
+                  >
+                    Наступна
+                  </Button>
+                </>
+              )}
+            </nav>
+          ) : null}
         </div>
       </div>
 

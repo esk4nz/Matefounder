@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 
 import { getPublicListingsAction } from "@/app/actions/listings";
@@ -8,7 +9,24 @@ import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-complet
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { createClient } from "@/lib/supabase/server";
 
-export default async function ListingsPage() {
+type ListingsPageProps = {
+  searchParams?: Promise<{ page?: string }>;
+};
+
+function parseListingsPage(raw: string | undefined): number {
+  if (raw === undefined || raw === "") {
+    return 1;
+  }
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) {
+    return 1;
+  }
+  return n;
+}
+
+export default async function ListingsPage({ searchParams }: ListingsPageProps) {
+  const params = (await searchParams) ?? {};
+  const initialPage = parseListingsPage(params.page);
   const supabase = await createClient();
   const {
     data: { user },
@@ -65,7 +83,7 @@ export default async function ListingsPage() {
   let initialTotal = 0;
 
   if (seekerGate.mode === "allowed") {
-    const listingsResult = await getPublicListingsAction({});
+    const listingsResult = await getPublicListingsAction({ page: initialPage });
     if (!listingsResult.ok) {
       if (listingsResult.reason === "unauthenticated") {
         redirect("/login");
@@ -78,15 +96,18 @@ export default async function ListingsPage() {
 
   return (
     <section className={PAGE_SHELL_CLASS}>
-      <ListingsView
-        userId={user.id}
-        seekerGate={seekerGate}
-        initialListings={initialListings}
-        initialTotal={initialTotal}
-        regions={regions}
-        cities={cities}
-        tags={tags}
-      />
+      <Suspense fallback={<div className="min-h-[40vh]" />}>
+        <ListingsView
+          userId={user.id}
+          seekerGate={seekerGate}
+          initialListings={initialListings}
+          initialTotal={initialTotal}
+          initialPage={initialPage}
+          regions={regions}
+          cities={cities}
+          tags={tags}
+        />
+      </Suspense>
     </section>
   );
 }

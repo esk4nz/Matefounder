@@ -127,6 +127,7 @@ const publicListingRequiredFiltersSchema = z
 
 export const publicListingsFiltersSchema = z
   .object({
+    page: z.coerce.number().int().min(1).default(1),
     type: z.enum(["offering", "searching"]).optional(),
     types: z.array(z.enum(["offering", "searching"])).optional(),
     cityId: z
