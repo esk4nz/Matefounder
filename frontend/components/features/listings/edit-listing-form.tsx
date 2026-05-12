@@ -390,6 +390,7 @@ export function EditListingForm({ regions, cities, tags, initialListing }: Props
                 {...form.register("availableFrom")}
                 id="availableFrom"
                 type="date"
+                min={new Date().toISOString().split("T")[0]}
                 className={cn(
                   "h-11",
                   form.formState.errors.availableFrom ? "border-red-500 focus-visible:ring-red-500" : "",
@@ -410,6 +411,7 @@ export function EditListingForm({ regions, cities, tags, initialListing }: Props
               {...form.register("availableUntil")}
               id="availableUntil"
               type="date"
+              min={new Date().toISOString().split("T")[0]}
               className={cn(
                 "h-11",
                 form.formState.errors.availableUntil ? "border-red-500 focus-visible:ring-red-500" : "",

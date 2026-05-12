@@ -109,6 +109,8 @@ function buildFiltersPayload(args: {
   authorGender: "male" | "female" | "any";
   requiredTags: Partial<Record<ProfileExclusiveTagCategory, number[]>>;
   authorInterestIds: number[];
+  moveInFrom: string;
+  moveInTo: string;
 }): Record<string, unknown> {
   const payload: Record<string, unknown> = {};
   if (args.types.length > 0) {
@@ -144,6 +146,14 @@ function buildFiltersPayload(args: {
   if (args.authorInterestIds.length > 0) {
     payload.authorInterestTagIds = args.authorInterestIds;
   }
+  const moveInFromTrim = args.moveInFrom.trim();
+  const moveInToTrim = args.moveInTo.trim();
+  if (moveInFromTrim) {
+    payload.moveInFrom = moveInFromTrim;
+  }
+  if (moveInToTrim) {
+    payload.moveInTo = moveInToTrim;
+  }
   return payload;
 }
 
@@ -168,6 +178,8 @@ export function ListingsView({
   const [requiredTags, setRequiredTags] = useState<Partial<Record<ProfileExclusiveTagCategory, number[]>>>({});
   const [authorGender, setAuthorGender] = useState<"male" | "female" | "any">("any");
   const [authorInterestIds, setAuthorInterestIds] = useState<number[]>([]);
+  const [moveInFrom, setMoveInFrom] = useState("");
+  const [moveInTo, setMoveInTo] = useState("");
   const [listError, setListError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [lastAppliedFilterSignature, setLastAppliedFilterSignature] = useState<string>("{}");
@@ -242,6 +254,9 @@ export function ListingsView({
     [cities, regionId],
   );
 
+  const todayIso = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const minMoveInTo = moveInFrom.trim() !== "" && moveInFrom >= todayIso ? moveInFrom.trim() : todayIso;
+
   const getCurrentListingsPayload = useCallback((): Record<string, unknown> => {
     const regionCityIds =
       regionId && !cityId.trim()
@@ -256,8 +271,10 @@ export function ListingsView({
       authorGender,
       requiredTags,
       authorInterestIds,
+      moveInFrom,
+      moveInTo,
     });
-  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
+  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, moveInFrom, moveInTo, priceMax, priceMin, regionId, requiredTags]);
 
   const applyFilters = useCallback(() => {
     startTransition(() => {
@@ -297,13 +314,17 @@ export function ListingsView({
       authorGender,
       requiredTags,
       authorInterestIds,
+      moveInFrom,
+      moveInTo,
     });
     return JSON.stringify(payload);
-  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, priceMax, priceMin, regionId, requiredTags]);
+  }, [authorInterestIds, cities, cityId, authorGender, lookingFor, moveInFrom, moveInTo, priceMax, priceMin, regionId, requiredTags]);
   const hasPendingFilterChanges = currentFilterSignature !== lastAppliedFilterSignature;
   const isDefaultFilters = lastAppliedFilterSignature === "{}";
   const displayPage = isDefaultFilters ? initialPage : filteredListPage;
-  const totalPages = Math.max(1, Math.ceil(total / PUBLIC_LISTINGS_PAGE_SIZE));
+  const listingPageCount = Math.ceil(total / PUBLIC_LISTINGS_PAGE_SIZE);
+  const totalPages = Math.max(1, listingPageCount);
+  const showPaginationNav = total > 0 && listingPageCount > 1;
   const rangeStart =
     total === 0
       ? 0
@@ -316,7 +337,6 @@ export function ListingsView({
       : listings.length === 0
         ? total
         : Math.min(total, (displayPage - 1) * PUBLIC_LISTINGS_PAGE_SIZE + listings.length);
-  const isNextDisabled = displayPage * PUBLIC_LISTINGS_PAGE_SIZE >= total;
   const sliderMinPercent = useMemo(() => {
     const minValue = parseBudgetInput(priceMin) ?? 0;
     return Math.max(0, Math.min(100, (minValue / MAX_LISTING_PRICE) * 100));
@@ -430,6 +450,8 @@ export function ListingsView({
         setRequiredTags({});
         setAuthorGender("any");
         setAuthorInterestIds([]);
+        setMoveInFrom("");
+        setMoveInTo("");
         setListError(null);
         setLastAppliedFilterSignature("{}");
 
@@ -664,6 +686,52 @@ export function ListingsView({
             </div>
 
             <div className="grid gap-3">
+              <p className="text-sm font-semibold text-slate-900">Бажане вікно заїзду</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="grid gap-2">
+                  <Label htmlFor="filter-move-in-from" className="text-slate-700">
+                    Від
+                  </Label>
+                  <Input
+                    id="filter-move-in-from"
+                    type="date"
+                    className="h-11"
+                    value={moveInFrom}
+                    min={todayIso}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setMoveInFrom(v);
+                      setMoveInTo((prev) => {
+                        const trimmedPrev = prev.trim();
+                        if (!trimmedPrev) {
+                          return prev;
+                        }
+                        const floor = v.trim() !== "" && v >= todayIso ? v.trim() : todayIso;
+                        return trimmedPrev < floor ? "" : prev;
+                      });
+                    }}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor="filter-move-in-to" className="text-slate-700">
+                    До
+                  </Label>
+                  <Input
+                    id="filter-move-in-to"
+                    type="date"
+                    className="h-11"
+                    value={moveInTo}
+                    min={minMoveInTo}
+                    onChange={(e) => setMoveInTo(e.target.value)}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Покажемо анкети, які будуть вільні в цей проміжок часу.
+              </p>
+            </div>
+
+            <div className="grid gap-3">
               <p className="text-sm font-semibold text-slate-900">Що ви очікуєте від вашого нового сусіда?</p>
               {PROFILE_EXCLUSIVE_CATEGORIES.map((category) => (
                 <div key={category} className="grid gap-2">
@@ -807,56 +875,59 @@ export function ListingsView({
               ))}
             </div>
           )}
-          {total > 0 ? (
+          {showPaginationNav ? (
             <nav
-              className="mt-8 flex flex-wrap items-center justify-center gap-3 sm:justify-end"
+              className={cn(
+                "mt-8 flex w-full flex-wrap items-center gap-3",
+                displayPage === 1
+                  ? "justify-end"
+                  : displayPage === listingPageCount
+                    ? "justify-start"
+                    : "justify-between",
+              )}
               aria-label="Пагінація оголошень"
             >
               {isDefaultFilters ? (
                 <>
-                  {initialPage <= 1 ? (
-                    <Button type="button" variant="outline" disabled className="min-w-[11rem]">
-                      Попередня
-                    </Button>
-                  ) : (
+                  {displayPage > 1 ? (
                     <Button type="button" variant="outline" className="min-w-[11rem]" asChild>
-                      <Link href={buildListingsListUrl(pathname, initialPage - 1)}>Попередня</Link>
+                      <Link href={buildListingsListUrl(pathname, displayPage - 1)}>Попередня</Link>
                     </Button>
-                  )}
-                  {isNextDisabled ? (
-                    <Button type="button" variant="outline" disabled className="min-w-[11rem]">
-                      Наступна
-                    </Button>
-                  ) : (
+                  ) : null}
+                  {displayPage < listingPageCount ? (
                     <Button type="button" variant="outline" className="min-w-[11rem]" asChild>
-                      <Link href={buildListingsListUrl(pathname, initialPage + 1)}>Наступна</Link>
+                      <Link href={buildListingsListUrl(pathname, displayPage + 1)}>Наступна</Link>
                     </Button>
-                  )}
+                  ) : null}
                 </>
               ) : (
                 <>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-w-[11rem]"
-                    disabled={filteredListPage <= 1 || isPending}
-                    onClick={() => {
-                      goFilteredPage(filteredListPage - 1);
-                    }}
-                  >
-                    Попередня
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="min-w-[11rem]"
-                    disabled={isNextDisabled || isPending}
-                    onClick={() => {
-                      goFilteredPage(filteredListPage + 1);
-                    }}
-                  >
-                    Наступна
-                  </Button>
+                  {displayPage > 1 ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-w-[11rem]"
+                      disabled={isPending}
+                      onClick={() => {
+                        goFilteredPage(filteredListPage - 1);
+                      }}
+                    >
+                      Попередня
+                    </Button>
+                  ) : null}
+                  {displayPage < listingPageCount ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-w-[11rem]"
+                      disabled={isPending}
+                      onClick={() => {
+                        goFilteredPage(filteredListPage + 1);
+                      }}
+                    >
+                      Наступна
+                    </Button>
+                  ) : null}
                 </>
               )}
             </nav>

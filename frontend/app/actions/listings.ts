@@ -1145,6 +1145,18 @@ export async function getPublicListingsAction(
     query = query.lte("price", filters.priceMax);
   }
 
+  const moveInFrom = filters.moveInFrom;
+  const moveInTo = filters.moveInTo;
+  if (moveInFrom && moveInTo) {
+    query = query
+      .lte("available_from", moveInTo)
+      .or(`available_until.is.null,available_until.gte.${moveInFrom}`);
+  } else if (moveInFrom) {
+    query = query.or(`available_until.is.null,available_until.gte.${moveInFrom}`);
+  } else if (moveInTo) {
+    query = query.lte("available_from", moveInTo);
+  }
+
   for (const blockedId of blockedIds) {
     query = query.neq("creator_id", blockedId);
   }
