@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getPublicListingsAction } from "@/app/actions/listings";
 import { ListingsView, type ListingsSeekerProfileGate } from "@/components/features/listings/listings-view";
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
 import { collectMissingSeekerProfileFields } from "@/lib/profile/profile-completeness";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
@@ -76,14 +77,16 @@ export default async function ListingsPage() {
   }
 
   return (
-    <ListingsView
-      userId={user.id}
-      seekerGate={seekerGate}
-      initialListings={initialListings}
-      initialTotal={initialTotal}
-      regions={regions}
-      cities={cities}
-      tags={tags}
-    />
+    <section className={PAGE_SHELL_CLASS}>
+      <ListingsView
+        userId={user.id}
+        seekerGate={seekerGate}
+        initialListings={initialListings}
+        initialTotal={initialTotal}
+        regions={regions}
+        cities={cities}
+        tags={tags}
+      />
+    </section>
   );
 }

@@ -112,6 +112,7 @@ type SeekerBatchContext = {
   >;
   blockedByMe: Set<string>;
   blockedByAuthor: Set<string>;
+  matchScoresByListingId?: Map<string, number>;
 };
 
 const STALE_SEEKER_STATE_MESSAGE = "Дані застаріли. Оновіть сторінку та спробуйте ще раз.";
@@ -282,6 +283,37 @@ async function loadSeekerBatchContext(
   return { requestsByListingId, blockedByMe, blockedByAuthor };
 }
 
+async function fetchMatchScoresByListingId(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  userId: string,
+  listingIds: string[],
+): Promise<Map<string, number>> {
+  const uniqueIds = [...new Set(listingIds)].filter((id) => id.length > 0);
+  const out = new Map<string, number>();
+  if (uniqueIds.length === 0) {
+    return out;
+  }
+
+  const { data, error } = await supabase.rpc("calculate_batch_match_scores", {
+    p_seeker_id: userId,
+    p_listing_ids: uniqueIds,
+  });
+
+  if (error || !data) {
+    return out;
+  }
+
+  for (const row of data as { listing_id?: unknown; match_score?: unknown }[]) {
+    const lid = typeof row.listing_id === "string" ? row.listing_id : "";
+    const raw = row.match_score;
+    const sc = typeof raw === "number" ? raw : typeof raw === "string" ? Number(raw) : NaN;
+    if (lid && Number.isFinite(sc)) {
+      out.set(lid, sc);
+    }
+  }
+  return out;
+}
+
 function applySeekerToListingCard(
   row: ListingDetailsQueryRow,
   detailsBase: ListingDetailsPayload,
@@ -290,7 +322,10 @@ function applySeekerToListingCard(
   const req = ctx.requestsByListingId.get(row.id);
   const requestStatus = req?.status ?? null;
   const requestUpdatedAt = req?.updatedAt ?? null;
-  const similarityScore = req?.similarityScore ?? null;
+  const fromRpc = ctx.matchScoresByListingId?.get(row.id);
+  const rpcRounded =
+    fromRpc !== undefined && Number.isFinite(fromRpc) ? Math.round(fromRpc) : null;
+  const similarityScore = (req?.similarityScore ?? rpcRounded) ?? null;
   const isBlockedByMe = ctx.blockedByMe.has(row.creator_id);
   const isBlockedByAuthor = ctx.blockedByAuthor.has(row.creator_id);
 
@@ -1129,11 +1164,15 @@ export async function getPublicListingsAction(
   }
 
   const rows = listingRows ?? [];
-  const seekerCtx = await loadSeekerBatchContext(
-    supabase,
-    user.id,
-    rows.map((r) => (r as ListingDetailsQueryRow).id),
-  );
+  const listingIds = rows.map((r) => (r as ListingDetailsQueryRow).id);
+  const [seekerCtx, matchScoresByListingId] = await Promise.all([
+    loadSeekerBatchContext(supabase, user.id, listingIds),
+    fetchMatchScoresByListingId(supabase, user.id, listingIds),
+  ]);
+  const seekerCtxWithScores: SeekerBatchContext = {
+    ...seekerCtx,
+    matchScoresByListingId,
+  };
 
   const listings: ListingCardModel[] = rows.map((listingRow) => {
     const row = listingRow as ListingDetailsQueryRow;
@@ -1141,7 +1180,7 @@ export async function getPublicListingsAction(
       supabase,
       reviewSummary: null,
     });
-    return applySeekerToListingCard(row, detailsBase, seekerCtx);
+    return applySeekerToListingCard(row, detailsBase, seekerCtxWithScores);
   });
 
   return {
@@ -1215,8 +1254,14 @@ export async function getPublicListingFreshDataAction(
     reviewSummary,
   });
 
-  const seekerCtx = await loadSeekerBatchContext(supabase, user.id, [row.id]);
-  const card = applySeekerToListingCard(row, detailsBase, seekerCtx);
+  const [seekerCtx, matchScoresByListingId] = await Promise.all([
+    loadSeekerBatchContext(supabase, user.id, [row.id]),
+    fetchMatchScoresByListingId(supabase, user.id, [row.id]),
+  ]);
+  const card = applySeekerToListingCard(row, detailsBase, {
+    ...seekerCtx,
+    matchScoresByListingId,
+  });
 
   return {
     ok: true,
@@ -1270,11 +1315,15 @@ export async function getMyRequestsAction(): Promise<MyRequestsActionResult> {
     return { ok: true, listings: [] };
   }
 
-  const seekerCtx = await loadSeekerBatchContext(
-    supabase,
-    user.id,
-    visibleListingRows.map((r) => (r as ListingDetailsQueryRow).id),
-  );
+  const myReqListingIds = visibleListingRows.map((r) => (r as ListingDetailsQueryRow).id);
+  const [seekerCtx, matchScoresByListingId] = await Promise.all([
+    loadSeekerBatchContext(supabase, user.id, myReqListingIds),
+    fetchMatchScoresByListingId(supabase, user.id, myReqListingIds),
+  ]);
+  const seekerCtxWithScores: SeekerBatchContext = {
+    ...seekerCtx,
+    matchScoresByListingId,
+  };
 
   const listings: ListingCardModel[] = visibleListingRows.map((listingRow) => {
     const row = listingRow as ListingDetailsQueryRow;
@@ -1282,7 +1331,7 @@ export async function getMyRequestsAction(): Promise<MyRequestsActionResult> {
       supabase,
       reviewSummary: null,
     });
-    return applySeekerToListingCard(row, detailsBase, seekerCtx);
+    return applySeekerToListingCard(row, detailsBase, seekerCtxWithScores);
   });
 
   listings.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
@@ -1438,6 +1487,7 @@ export async function getIncomingRequestsAction(listingId: string): Promise<GetI
 export async function createListingRequestAction(
   listingId: string,
   expectedListingUpdatedAt: string,
+  similarityScore?: number | null,
 ): Promise<SimpleListingMutationResult> {
   const supabase = await createClient();
   const {
@@ -1475,10 +1525,19 @@ export async function createListingRequestAction(
     return { ok: false, message: messageForPeerGateFailure(peerGate) };
   }
 
-  const { error } = await supabase.from("listing_requests").insert({
+  const insertPayload: {
+    listing_id: string;
+    initiator_id: string;
+    similarity_score?: number;
+  } = {
     listing_id: trimmed,
     initiator_id: user.id,
-  });
+  };
+  if (typeof similarityScore === "number" && Number.isFinite(similarityScore)) {
+    insertPayload.similarity_score = Math.max(0, Math.min(100, Math.round(similarityScore)));
+  }
+
+  const { error } = await supabase.from("listing_requests").insert(insertPayload);
 
   if (error) {
     if (error.code === "23505") {

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { getIncomingRequestsAction } from "@/app/actions/listings";
 import { OwnerRequestsView } from "@/components/features/listings/owner-requests-view";
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -30,11 +31,13 @@ export default async function OwnerListingRequestsPage({ params }: Props) {
   }
 
   return (
-    <OwnerRequestsView
-      listingId={id}
-      listingTitle={result.listingTitle}
-      listingUpdatedAt={result.listingUpdatedAt}
-      initialRequests={result.requests}
-    />
+    <section className={PAGE_SHELL_CLASS}>
+      <OwnerRequestsView
+        listingId={id}
+        listingTitle={result.listingTitle}
+        listingUpdatedAt={result.listingUpdatedAt}
+        initialRequests={result.requests}
+      />
+    </section>
   );
 }

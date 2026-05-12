@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 
 type ReviewsPublicPageProps = {
@@ -26,7 +27,7 @@ export default async function ReviewsPublicPage({ params }: ReviewsPublicPagePro
     "Користувач";
 
   return (
-    <section className="container mx-auto max-w-5xl px-6 py-12">
+    <section className={PAGE_SHELL_CLASS}>
       <h1 className="text-3xl font-black text-slate-900">Відгуки про {displayName}</h1>
       <p className="mt-3 max-w-2xl text-slate-600">
         Це публічна сторінка відгуків користувача. Незабаром тут з&apos;явиться повний список оцінок і коментарів.

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { CreateListingForm } from "@/components/features/listings/create-listing-form";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
+import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function NewListingPage() {
@@ -28,7 +29,7 @@ export default async function NewListingPage() {
   const tags = mapTagsQueryToProfileRows(tagsResult.data ?? []);
 
   return (
-    <section className="container mx-auto max-w-5xl px-6 py-12">
+    <section className={PAGE_SHELL_CLASS}>
       <div className="mt-8">
         <CreateListingForm regions={regions} cities={cities} tags={tags} />
       </div>

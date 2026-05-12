@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { HomeErrorToast } from "@/components/features/home/home-error-toast";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, PAGE_SHELL_CLASS } from "@/lib/utils";
 import { ChevronRight, Sparkles } from "lucide-react";
 
 type HomeProps = {
@@ -15,7 +15,7 @@ export default async function Home({ searchParams }: HomeProps) {
   const error = Array.isArray(params.error) ? params.error[0] : params.error;
 
   return (
-    <section className="container mx-auto px-6 flex-1 flex flex-col justify-between py-12">
+    <section className={cn(PAGE_SHELL_CLASS, "flex flex-1 flex-col justify-between")}>
       <HomeErrorToast key={error ?? "home"} error={error} />
 
       <div className="flex flex-col items-center text-center mt-12 md:mt-24 gap-6">

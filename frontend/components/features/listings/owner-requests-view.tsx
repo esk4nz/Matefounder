@@ -303,7 +303,7 @@ export function OwnerRequestsView({
   );
 
   return (
-    <section className="container mx-auto max-w-5xl px-6 py-12">
+    <div className="w-full">
       <p className="text-sm font-medium text-muted-foreground">
         <Link href="/my-listings" className="text-primary underline-offset-2 hover:underline">
           Мої оголошення
@@ -342,6 +342,6 @@ export function OwnerRequestsView({
         telegram={contactsPayload?.telegram ?? null}
         email={contactsPayload?.email ?? null}
       />
-    </section>
+    </div>
   );
 }

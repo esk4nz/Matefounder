@@ -2,6 +2,7 @@ import { listAdminUsersAction, listInterestTagsAction } from "@/app/actions/admi
 import { AdminTagsTab } from "@/components/features/admin/admin-tags-tab"
 import { AdminUsersTab } from "@/components/features/admin/admin-users-tab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { PAGE_SHELL_CLASS } from "@/lib/utils"
 import { createClient } from "@/lib/supabase/server"
 
 export const dynamic = "force-dynamic"
@@ -22,7 +23,7 @@ export default async function AdminConsolePage() {
   const initialTagsError = tagsResult.ok ? null : tagsResult.message
 
   return (
-    <section className="container mx-auto max-w-4xl px-6 py-12">
+    <section className={PAGE_SHELL_CLASS}>
       <h1 className="text-3xl font-black text-slate-900">Консоль адміністрування</h1>
       <p className="mt-3 text-slate-600">
         Керування користувачами, доступом та довідником інтересів.
