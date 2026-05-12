@@ -18,6 +18,7 @@ import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/prof
 import { buildListingDetailsPayload, type ListingDetailsQueryRow } from "@/lib/listings/build-listing-details-payload";
 import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
 import { LISTING_MAX_PHOTOS, PUBLIC_LISTINGS_PAGE_SIZE } from "@/lib/listings/constants";
+import { refreshSimilarityScoresForListingRequests } from "@/lib/listings/sync-listing-request-similarity";
 import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
 import type {
   ListingDetailsPayload,
@@ -774,6 +775,26 @@ export async function updateMyListingAction(
     };
   }
 
+  const { data: existingRequiredTags, error: existingRequiredTagsError } = await supabase
+    .from("listing_required_tags")
+    .select("tag_id")
+    .eq("listing_id", listingId);
+  if (existingRequiredTagsError) {
+    return { ok: false, message: "Не вдалося завантажити теги анкети. Оновіть сторінку та спробуйте ще раз." };
+  }
+
+  const selectedListingTagIds = Object.values(parsedListing.data.tagSelections).filter(
+    (tagId): tagId is number => typeof tagId === "number",
+  );
+  const sortedNewTagIds = [...selectedListingTagIds].sort((a, b) => a - b);
+  const sortedPrevTagIds = (existingRequiredTags ?? [])
+    .map((r) => r.tag_id)
+    .filter((id): id is number => typeof id === "number")
+    .sort((a, b) => a - b);
+  const listingMatchTagsChanged =
+    sortedNewTagIds.length !== sortedPrevTagIds.length ||
+    sortedNewTagIds.some((id, i) => id !== sortedPrevTagIds[i]);
+
   const { data: currentImageRows, error: currentImagesError } = await supabase
     .from("listing_images")
     .select("image_path, order_index")
@@ -850,9 +871,6 @@ export async function updateMyListingAction(
     return { ok: false, message: "Дані застаріли. Оновіть сторінку та спробуйте ще раз." };
   }
 
-  const selectedListingTagIds = Object.values(parsedListing.data.tagSelections).filter(
-    (tagId): tagId is number => typeof tagId === "number",
-  );
   const { error: clearTagsError } = await supabase
     .from("listing_required_tags")
     .delete()
@@ -891,6 +909,14 @@ export async function updateMyListingAction(
   const removedPaths = currentImagePaths.filter((path) => !keptImagePaths.includes(path));
   if (removedPaths.length > 0) {
     await supabase.storage.from("listing-images").remove(removedPaths);
+  }
+
+  if (listingMatchTagsChanged) {
+    try {
+      await refreshSimilarityScoresForListingRequests(listingId);
+    } catch (e) {
+      console.error("[listing_request_similarity] after_listing_tags", e);
+    }
   }
 
   revalidatePath("/my-listings");

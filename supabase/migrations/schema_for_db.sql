@@ -63,7 +63,7 @@ create table public.profiles (
   contact_phone text,
   contact_telegram text,
   gender text,
-  embedding vector(768),
+  embedding vector(1536),
   is_blocked boolean not null default false,
   is_admin boolean not null default false,
   updated_at timestamptz not null default now(),
@@ -1532,14 +1532,17 @@ insert into public.tags (category_id, slug, label_uk) values
 -- Match score functions
 drop function if exists public.calculate_batch_match_scores(uuid, uuid[]);
 drop function if exists public.calculate_match_score(uuid, uuid);
+drop function if exists public.calculate_match_score_impl(uuid, uuid);
+drop function if exists public.recalculate_listing_request_similarity_service(uuid, uuid);
 
-create or replace function public.calculate_match_score(
+create or replace function public.calculate_match_score_impl(
   p_seeker_id uuid,
   p_listing_id uuid
 )
 returns integer
 language plpgsql
 stable
+security definer
 set search_path = public
 as $$
 declare
@@ -1564,10 +1567,6 @@ declare
   v_cosine double precision;
   v_vector_score numeric := 0;
 begin
-  if auth.uid() is null or p_seeker_id is distinct from auth.uid() then
-    return 0;
-  end if;
-
   select l.gender_preference into v_listing_gender_preference
   from public.listings l
   where l.id = p_listing_id;
@@ -1777,6 +1776,51 @@ begin
 end;
 $$;
 
+revoke all on function public.calculate_match_score_impl(uuid, uuid) from public;
+
+create or replace function public.calculate_match_score(
+  p_seeker_id uuid,
+  p_listing_id uuid
+)
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null or p_seeker_id is distinct from auth.uid() then
+    return 0;
+  end if;
+
+  return public.calculate_match_score_impl(p_seeker_id, p_listing_id);
+end;
+$$;
+
+create or replace function public.recalculate_listing_request_similarity_service(
+  p_listing_id uuid,
+  p_initiator_id uuid
+)
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+begin
+  if not exists (
+    select 1
+    from public.listing_requests lr
+    where lr.listing_id = p_listing_id
+      and lr.initiator_id = p_initiator_id
+  ) then
+    return 0;
+  end if;
+
+  return public.calculate_match_score_impl(p_initiator_id, p_listing_id);
+end;
+$$;
+
 create or replace function public.calculate_batch_match_scores(
   p_seeker_id uuid,
   p_listing_ids uuid[]
@@ -1796,7 +1840,10 @@ as $$
 $$;
 
 revoke all on function public.calculate_match_score(uuid, uuid) from public;
-revoke all on function public.calculate_batch_match_scores(uuid, uuid[]) from public;
-
 grant execute on function public.calculate_match_score(uuid, uuid) to authenticated;
+
+revoke all on function public.calculate_batch_match_scores(uuid, uuid[]) from public;
 grant execute on function public.calculate_batch_match_scores(uuid, uuid[]) to authenticated;
+
+revoke all on function public.recalculate_listing_request_similarity_service(uuid, uuid) from public;
+grant execute on function public.recalculate_listing_request_similarity_service(uuid, uuid) to service_role;
