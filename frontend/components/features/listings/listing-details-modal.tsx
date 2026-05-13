@@ -50,6 +50,16 @@ function reviewsCountPhrase(count: number): string {
   return `${count} ${word}`;
 }
 
+function formatCreatorRating(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "";
+  }
+  return new Intl.NumberFormat("uk-UA", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
 const LISTING_TYPE_LABEL: Record<ListingDetailsPayload["type"], string> = {
   offering: "Шукаю сусіда",
   searching: "Шукаю житло",
@@ -168,11 +178,16 @@ export function ListingDetailsModal({
                         href={`/profile/${listing.creatorId}/reviews`}
                         className="font-medium text-blue-700 underline-offset-2 hover:underline"
                       >
-                        {listing.reviewSummary && listing.reviewSummary.count > 0
-                          ? `⭐ ${listing.reviewSummary.averageOutOf10.toFixed(1)}/10 (${reviewsCountPhrase(
-                              listing.reviewSummary.count,
-                            )})`
-                          : "ще немає відгуків"}
+                        {listing.creatorRating > 0 ? (
+                          <span className="text-slate-800">
+                            <span className="text-amber-500" aria-hidden>
+                              ★
+                            </span>
+                            {` ${formatCreatorRating(listing.creatorRating)} (${reviewsCountPhrase(listing.creatorReviewsCount)})`}
+                          </span>
+                        ) : (
+                          <span className="text-slate-600">Немає оцінок</span>
+                        )}
                       </Link>
                     )}
                   </div>

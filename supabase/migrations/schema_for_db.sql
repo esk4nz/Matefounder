@@ -9,7 +9,6 @@ drop policy if exists "profile_images_insert_own" on storage.objects;
 drop policy if exists "profile_images_update_own" on storage.objects;
 drop policy if exists "profile_images_delete_own" on storage.objects;
 
-drop table if exists public.user_matches cascade;
 drop table if exists public.reports cascade;
 drop table if exists public.reviews cascade;
 drop table if exists public.listing_requests cascade;
@@ -29,6 +28,7 @@ drop function if exists public.set_updated_at() cascade;
 drop function if exists public.username_is_taken(text) cascade;
 drop function if exists public.admin_console_list_users(text, integer, integer) cascade;
 drop function if exists public.review_allowed_by_request(uuid, uuid) cascade;
+drop function if exists public.update_profile_rating() cascade;
 drop function if exists public.seeker_has_request_for_listing(uuid) cascade;
 drop function if exists public.seeker_has_accepted_request_for_listing(uuid) cascade;
 drop function if exists public.seeker_has_visibility_override_for_listing(uuid) cascade;
@@ -66,6 +66,8 @@ create table public.profiles (
   embedding vector(1536),
   is_blocked boolean not null default false,
   is_admin boolean not null default false,
+  rating double precision not null default 0,
+  reviews_count integer not null default 0,
   updated_at timestamptz not null default now(),
   constraint profiles_username_len check (char_length(username) between 3 and 40),
   constraint profiles_gender_chk check (gender in ('male', 'female')),
@@ -169,7 +171,7 @@ create index if not exists listing_requests_listing_idx
 create index if not exists listing_requests_initiator_idx
   on public.listing_requests (initiator_id);
 
--- reviews, reports, user_blocks, user_matches
+-- reviews, reports, user_blocks
 create table public.reviews (
   id bigint generated always as identity primary key,
   author_id uuid not null references public.profiles (id) on delete cascade,
@@ -177,6 +179,7 @@ create table public.reviews (
   rating integer not null check (rating between 1 and 5),
   comment text not null,
   created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   constraint reviews_no_self check (author_id <> target_id),
   constraint reviews_one_per_pair unique (author_id, target_id)
 );
@@ -206,18 +209,6 @@ create table public.user_blocks (
 );
 
 create index if not exists user_blocks_blocked_idx on public.user_blocks (blocked_id);
-
-create table public.user_matches (
-  id bigint generated always as identity primary key,
-  user_id uuid not null references public.profiles (id) on delete cascade,
-  matched_user_id uuid not null references public.profiles (id) on delete cascade,
-  score double precision,
-  constraint user_matches_no_self check (user_id <> matched_user_id),
-  constraint user_matches_unique_pair unique (user_id, matched_user_id)
-);
-
-create index if not exists user_matches_user_score_idx
-  on public.user_matches (user_id, score desc nulls last);
 
 -- functions, triggers
 create or replace function public.handle_new_user()
@@ -283,6 +274,62 @@ create trigger listing_requests_set_updated_at
   before update on public.listing_requests
   for each row execute procedure public.set_updated_at();
 
+create trigger reviews_set_updated_at
+  before update on public.reviews
+  for each row execute procedure public.set_updated_at();
+
+create or replace function public.update_profile_rating()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  tids uuid[];
+  tid uuid;
+  agg_rating double precision;
+  agg_count integer;
+begin
+  if tg_op = 'DELETE' then
+    tids := array[old.target_id];
+  elsif tg_op = 'UPDATE' then
+    if old.target_id is distinct from new.target_id then
+      tids := array[old.target_id, new.target_id];
+    else
+      tids := array[new.target_id];
+    end if;
+  else
+    tids := array[new.target_id];
+  end if;
+
+  foreach tid in array tids
+  loop
+    select
+      coalesce(avg(r.rating)::double precision, 0),
+      coalesce(count(*)::integer, 0)
+    into agg_rating, agg_count
+    from public.reviews r
+    inner join public.profiles pa on pa.id = r.author_id
+    where r.target_id = tid
+      and pa.is_blocked = false;
+
+    update public.profiles pr
+    set
+      rating = agg_rating,
+      reviews_count = agg_count
+    where pr.id = tid;
+  end loop;
+
+  return coalesce(new, old);
+end;
+$$;
+
+revoke all on function public.update_profile_rating() from public;
+
+create trigger reviews_update_profile_rating
+  after insert or update or delete on public.reviews
+  for each row execute procedure public.update_profile_rating();
+
 create or replace function public.username_is_taken(candidate text)
 returns boolean
 language sql
@@ -324,6 +371,7 @@ as $$
 $$;
 
 revoke all on function public.review_allowed_by_request(uuid, uuid) from public;
+grant execute on function public.review_allowed_by_request(uuid, uuid) to authenticated;
 
 create or replace function public.seeker_may_select_listing_as_request_peer(p_listing_id uuid)
 returns boolean
@@ -517,7 +565,6 @@ alter table public.listing_requests enable row level security;
 alter table public.reviews enable row level security;
 alter table public.reports enable row level security;
 alter table public.user_blocks enable row level security;
-alter table public.user_matches enable row level security;
 
 -- RLS regions, cities
 drop policy if exists "regions_select_authenticated" on public.regions;
@@ -990,14 +1037,11 @@ grant update (status) on public.listing_requests to authenticated;
 
 -- RLS reviews
 drop policy if exists "reviews_select_related" on public.reviews;
-create policy "reviews_select_related"
+drop policy if exists "reviews_select_authenticated" on public.reviews;
+create policy "reviews_select_authenticated"
   on public.reviews for select
   to authenticated
-  using (
-    author_id = auth.uid()
-    or target_id = auth.uid()
-    or exists (select 1 from public.profiles pr where pr.id = auth.uid() and pr.is_admin)
-  );
+  using (true);
 
 drop policy if exists "reviews_insert_when_request_accepted" on public.reviews;
 create policy "reviews_insert_when_request_accepted"
@@ -1009,6 +1053,35 @@ create policy "reviews_insert_when_request_accepted"
       select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
     )
     and public.review_allowed_by_request(author_id, target_id)
+  );
+
+drop policy if exists "reviews_update_author" on public.reviews;
+create policy "reviews_update_author"
+  on public.reviews for update
+  to authenticated
+  using (
+    author_id = auth.uid()
+    and not exists (
+      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+    )
+  )
+  with check (
+    author_id = auth.uid()
+    and not exists (
+      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+    )
+    and public.review_allowed_by_request(author_id, target_id)
+  );
+
+drop policy if exists "reviews_delete_author" on public.reviews;
+create policy "reviews_delete_author"
+  on public.reviews for delete
+  to authenticated
+  using (
+    author_id = auth.uid()
+    and not exists (
+      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
+    )
   );
 
 -- RLS reports
@@ -1065,37 +1138,6 @@ create policy "user_blocks_delete_blocker"
   on public.user_blocks for delete
   to authenticated
   using (blocker_id = auth.uid());
-
--- RLS user_matches
-drop policy if exists "user_matches_select_own" on public.user_matches;
-create policy "user_matches_select_own"
-  on public.user_matches for select
-  to authenticated
-  using (user_id = auth.uid());
-
-drop policy if exists "user_matches_insert_own" on public.user_matches;
-create policy "user_matches_insert_own"
-  on public.user_matches for insert
-  to authenticated
-  with check (
-    user_id = auth.uid()
-    and not exists (
-      select 1 from public.profiles p where p.id = auth.uid() and p.is_blocked
-    )
-  );
-
-drop policy if exists "user_matches_update_own" on public.user_matches;
-create policy "user_matches_update_own"
-  on public.user_matches for update
-  to authenticated
-  using (user_id = auth.uid())
-  with check (user_id = auth.uid());
-
-drop policy if exists "user_matches_delete_own" on public.user_matches;
-create policy "user_matches_delete_own"
-  on public.user_matches for delete
-  to authenticated
-  using (user_id = auth.uid());
 
 -- storage.buckets, storage.objects
 insert into storage.buckets (id, name, public)
