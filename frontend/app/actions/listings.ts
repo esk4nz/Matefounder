@@ -22,7 +22,6 @@ import { refreshSimilarityScoresForListingRequests } from "@/lib/listings/sync-l
 import { LISTING_FLASH_CODE, type UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
 import type {
   ListingDetailsPayload,
-  ListingDetailsReviewSummary,
   ListingRequestStatus,
 } from "@/lib/listings/listing-details-types";
 import { createClient } from "@/lib/supabase/server";
@@ -101,6 +100,8 @@ const LISTING_DETAILS_SELECT = `
     last_name,
     gender,
     bio,
+    rating,
+    reviews_count,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   ),
   listing_requests(count)
@@ -964,34 +965,20 @@ export async function getMyListingFreshDataAction(
     return { ok: false, reason: "unauthenticated" };
   }
 
-  const [{ data: listingRow }, { data: reviewRatings }] = await Promise.all([
-    supabase
-      .from("listings")
-      .select(LISTING_DETAILS_SELECT)
-      .eq("id", listingId)
-      .eq("creator_id", user.id)
-      .maybeSingle(),
-    supabase.from("reviews").select("rating").eq("target_id", user.id),
-  ]);
+  const { data: listingRow } = await supabase
+    .from("listings")
+    .select(LISTING_DETAILS_SELECT)
+    .eq("id", listingId)
+    .eq("creator_id", user.id)
+    .maybeSingle();
 
   if (!listingRow) {
     return { ok: false, reason: "notFound" };
   }
 
-  let reviewSummary: ListingDetailsReviewSummary | null = null;
-  const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
-  if (ratings.length > 0) {
-    const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
-    reviewSummary = {
-      averageOutOf10: avg5 * 2,
-      count: ratings.length,
-    };
-  }
-
   const row = listingRow as ListingDetailsQueryRow;
   const details = buildListingDetailsPayload(row, {
     supabase,
-    reviewSummary,
   });
 
   return {
@@ -1220,7 +1207,6 @@ export async function getPublicListingsAction(
     const row = listingRow as ListingDetailsQueryRow;
     const detailsBase = buildListingDetailsPayload(row, {
       supabase,
-      reviewSummary: null,
     });
     return applySeekerToListingCard(row, detailsBase, seekerCtxWithScores);
   });
@@ -1278,22 +1264,8 @@ export async function getPublicListingFreshDataAction(
     }
   }
 
-  let reviewSummary: ListingDetailsReviewSummary | null = null;
-  if (row.creator_id === user.id) {
-    const { data: reviewRatings } = await supabase.from("reviews").select("rating").eq("target_id", user.id);
-    const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
-    if (ratings.length > 0) {
-      const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
-      reviewSummary = {
-        averageOutOf10: avg5 * 2,
-        count: ratings.length,
-      };
-    }
-  }
-
   const detailsBase = buildListingDetailsPayload(row, {
     supabase,
-    reviewSummary,
   });
 
   const [seekerCtx, matchScoresByListingId] = await Promise.all([
@@ -1371,7 +1343,6 @@ export async function getMyRequestsAction(): Promise<MyRequestsActionResult> {
     const row = listingRow as ListingDetailsQueryRow;
     const detailsBase = buildListingDetailsPayload(row, {
       supabase,
-      reviewSummary: null,
     });
     return applySeekerToListingCard(row, detailsBase, seekerCtxWithScores);
   });

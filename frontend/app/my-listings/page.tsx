@@ -3,7 +3,6 @@ import { redirect } from "next/navigation";
 import type { MyListingCardModel } from "@/components/features/listings/my-listings-view";
 import { MyListingsView } from "@/components/features/listings/my-listings-view";
 import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details-payload";
-import type { ListingDetailsReviewSummary } from "@/lib/listings/listing-details-types";
 import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
 import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
@@ -29,6 +28,8 @@ const LISTING_DETAILS_SELECT = `
     last_name,
     gender,
     bio,
+    rating,
+    reviews_count,
     profile_tags(tags(id, slug, label_uk, category_id, tag_categories(name)))
   ),
   listing_requests(count)
@@ -44,29 +45,15 @@ export default async function MyListingsPage() {
     redirect("/");
   }
 
-  const [{ data: listingsRows }, { data: reviewRatings }] = await Promise.all([
-    supabase
-      .from("listings")
-      .select(LISTING_DETAILS_SELECT)
-      .eq("creator_id", user.id)
-      .order("updated_at", { ascending: false }),
-    supabase.from("reviews").select("rating").eq("target_id", user.id),
-  ]);
-
-  let reviewSummary: ListingDetailsReviewSummary | null = null;
-  const ratings = (reviewRatings ?? []).map((r) => r.rating).filter((n) => typeof n === "number");
-  if (ratings.length > 0) {
-    const avg5 = ratings.reduce((acc, n) => acc + n, 0) / ratings.length;
-    reviewSummary = {
-      averageOutOf10: avg5 * 2,
-      count: ratings.length,
-    };
-  }
+  const { data: listingsRows } = await supabase
+    .from("listings")
+    .select(LISTING_DETAILS_SELECT)
+    .eq("creator_id", user.id)
+    .order("updated_at", { ascending: false });
 
   const listings: MyListingCardModel[] = (listingsRows ?? []).map((row) => {
     const details = buildListingDetailsPayload(row, {
       supabase,
-      reviewSummary,
     });
     const firstImageUrl = details.imageUrls[0] ?? null;
     return {

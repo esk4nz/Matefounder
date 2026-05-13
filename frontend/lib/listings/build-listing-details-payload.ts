@@ -14,7 +14,6 @@ import {
 import type {
   ListingDetailsExclusiveByCategory,
   ListingDetailsPayload,
-  ListingDetailsReviewSummary,
   ListingDetailsTag,
 } from "@/lib/listings/listing-details-types";
 
@@ -57,6 +56,8 @@ export type ListingDetailsQueryRow = {
         last_name: string | null;
         gender: string | null;
         bio: string | null;
+        rating: number | null;
+        reviews_count: number | null;
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }
     | {
@@ -64,6 +65,8 @@ export type ListingDetailsQueryRow = {
         last_name: string | null;
         gender: string | null;
         bio: string | null;
+        rating: number | null;
+        reviews_count: number | null;
         profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
       }[]
     | null;
@@ -154,6 +157,8 @@ function unwrapCreatorProfile(
   last_name: string | null;
   gender: string | null;
   bio: string | null;
+  rating: number | null;
+  reviews_count: number | null;
   profile_tags: { tags: NestedTagRow | NestedTagRow[] | null }[] | null;
 } | null {
   if (!profiles) {
@@ -169,7 +174,6 @@ export function buildListingDetailsPayload(
   row: ListingDetailsQueryRow,
   opts: {
     supabase: SupabaseClient;
-    reviewSummary: ListingDetailsReviewSummary | null;
   },
 ): ListingDetailsPayload {
   const bucket = opts.supabase.storage.from("listing-images");
@@ -191,6 +195,13 @@ export function buildListingDetailsPayload(
   const creatorFirstName = creator?.first_name?.trim() ?? "";
   const creatorLastName = creator?.last_name?.trim() ?? "";
   const authorName = [creatorFirstName, creatorLastName].filter(Boolean).join(" ");
+
+  const creatorRating =
+    typeof creator?.rating === "number" && Number.isFinite(creator.rating) ? creator.rating : 0;
+  const creatorReviewsCount =
+    typeof creator?.reviews_count === "number" && Number.isFinite(creator.reviews_count)
+      ? Math.max(0, Math.floor(creator.reviews_count))
+      : 0;
 
   const requiredProfileRows = junctionToProfileTagRows(row.listing_required_tags ?? []);
   const authorProfileRows = junctionToProfileTagRows(creator?.profile_tags ?? []);
@@ -217,7 +228,8 @@ export function buildListingDetailsPayload(
     requiredByCategory: toExclusiveByCategory(requiredProfileRows),
     authorByCategory: toExclusiveByCategory(authorProfileRows),
     authorInterests: toInterestTags(authorProfileRows),
-    reviewSummary: opts.reviewSummary,
+    creatorRating,
+    creatorReviewsCount,
     similarityScore: null,
     requestStatus: null,
     isBlockedByMe: false,

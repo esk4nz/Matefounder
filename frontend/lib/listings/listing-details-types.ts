@@ -1,11 +1,6 @@
 import type { ProfileExclusiveTagCategory } from "@/app/schemas/profile";
 import type { ListingGenderPreference } from "@/app/schemas/listings";
 
-export type ListingDetailsReviewSummary = {
-  averageOutOf10: number;
-  count: number;
-};
-
 export type ListingDetailsTag = {
   slug: string;
   labelUk: string;
@@ -39,7 +34,8 @@ export type ListingDetailsPayload = {
   requiredByCategory: ListingDetailsExclusiveByCategory;
   authorByCategory: ListingDetailsExclusiveByCategory;
   authorInterests: ListingDetailsTag[];
-  reviewSummary: ListingDetailsReviewSummary | null;
+  creatorRating: number;
+  creatorReviewsCount: number;
   similarityScore: number | null;
   requestStatus: ListingRequestStatus | null;
   isBlockedByMe: boolean;
