@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const REVIEWS_PAGE_SIZE = 8;
+export const REVIEWS_PAGE_SIZE = 10;
 
 export const REVIEW_STALE_VERSION_MESSAGE =
   "Цей відгук вже було змінено в іншій вкладці. Будь ласка, оновіть сторінку.";
@@ -25,7 +25,12 @@ const reviewContentFields = {
   comment: z
     .string()
     .transform((s) => s.trim())
-    .pipe(z.string().min(1, "Коментар не може бути порожнім.").max(2000, "Коментар занадто довгий.")),
+    .pipe(
+      z
+        .string()
+        .min(1, "Коментар не може бути порожнім.")
+        .max(1000, "Максимум 1000 символів"),
+    ),
 };
 
 export const upsertReviewInsertPayloadSchema = z.object(reviewContentFields);

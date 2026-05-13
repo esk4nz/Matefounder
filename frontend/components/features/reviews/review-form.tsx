@@ -8,6 +8,7 @@ import { Star } from "lucide-react";
 import { z } from "zod";
 
 import { upsertReviewAction, type ExistingReviewSummary } from "@/app/actions/reviews";
+import { FieldError } from "@/components/features/profile/profile-form-feedback";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
@@ -19,7 +20,12 @@ const reviewFormSchema = z.object({
   comment: z
     .string()
     .transform((s) => s.trim())
-    .pipe(z.string().min(1, "Коментар не може бути порожнім.").max(2000, "Коментар занадто довгий.")),
+    .pipe(
+      z
+        .string()
+        .min(1, "Коментар не може бути порожнім.")
+        .max(1000, "Максимум 1000 символів"),
+    ),
 });
 
 type ReviewFormValues = z.input<typeof reviewFormSchema>;
@@ -151,9 +157,8 @@ export function ReviewForm({ targetUserId, existingReview }: Props) {
                 />
               )}
             />
-            {form.formState.errors.comment?.message ? (
-              <p className="text-sm font-medium text-red-600">{form.formState.errors.comment.message}</p>
-            ) : null}
+            <p className="text-xs text-slate-500">Максимум 1000 символів.</p>
+            <FieldError message={form.formState.errors.comment?.message} />
           </div>
 
           {form.formState.errors.root?.message ? (

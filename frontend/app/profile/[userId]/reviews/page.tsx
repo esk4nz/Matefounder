@@ -1,16 +1,13 @@
-import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
 import { checkBlockStatusAction } from "@/app/actions/blocks";
 import { checkReviewEligibilityAction, getReviewsAction } from "@/app/actions/reviews";
-import { REVIEWS_PAGE_SIZE } from "@/app/schemas/reviews";
 import { ProfileReviewsSection } from "@/components/features/reviews/profile-reviews-section";
 import { ReviewsSubjectHeader } from "@/components/features/reviews/reviews-subject-header";
 import type { TagsWithCategoryQueryRow } from "@/lib/profile/map-tags";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
 import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
-import { Button } from "@/components/ui/button";
 
 type ReviewsPublicPageProps = {
   params: Promise<{ userId: string }>;
@@ -103,11 +100,6 @@ export default async function ReviewsPublicPage({ params, searchParams }: Review
   const existingReview = eligibilityOk ? eligibility.existingReview : null;
   const eligibilityError = !eligibility.ok ? eligibility.message : null;
 
-  const totalPages =
-    reviewsRes.ok && reviewsRes.totalCount > 0
-      ? Math.max(1, Math.ceil(reviewsRes.totalCount / REVIEWS_PAGE_SIZE))
-      : 1;
-
   return (
     <section className={PAGE_SHELL_CLASS}>
       <div className="space-y-10">
@@ -137,46 +129,17 @@ export default async function ReviewsPublicPage({ params, searchParams }: Review
         ) : null}
 
         {reviewsRes.ok ? (
-          <>
-            <ProfileReviewsSection
-              targetUserId={userId}
-              currentUserId={user.id}
-              isAllowed={isAllowed}
-              existingReview={existingReview}
-              reviews={reviewsRes.reviews}
-            />
-
-            {totalPages > 1 ? (
-              <div className="flex flex-wrap items-center justify-between gap-4 border-t border-slate-200 pt-6">
-                <p className="text-sm font-medium text-slate-600">
-                  Сторінка {reviewsRes.page} з {totalPages}
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  {reviewsRes.page > 1 ? (
-                    <Button variant="outline" size="sm" className="cursor-pointer" asChild>
-                      <Link
-                        href={
-                          reviewsRes.page === 2
-                            ? `/profile/${userId}/reviews`
-                            : `/profile/${userId}/reviews?page=${reviewsRes.page - 1}`
-                        }
-                        scroll={false}
-                      >
-                        Назад
-                      </Link>
-                    </Button>
-                  ) : null}
-                  {reviewsRes.page < totalPages ? (
-                    <Button variant="outline" size="sm" className="cursor-pointer" asChild>
-                      <Link href={`/profile/${userId}/reviews?page=${reviewsRes.page + 1}`} scroll={false}>
-                        Далі
-                      </Link>
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-          </>
+          <ProfileReviewsSection
+            targetUserId={userId}
+            currentUserId={user.id}
+            isAllowed={isAllowed}
+            existingReview={existingReview}
+            reviews={reviewsRes.data}
+            pagination={{
+              currentPage: reviewsRes.currentPage,
+              totalPages: reviewsRes.totalPages,
+            }}
+          />
         ) : null}
       </div>
     </section>

@@ -1,8 +1,20 @@
 "use client";
 
+import Link from "next/link";
+
 import type { ExistingReviewSummary, ReviewListItem } from "@/app/actions/reviews";
 import { ReviewCard } from "@/components/features/reviews/review-card";
 import { ReviewForm } from "@/components/features/reviews/review-form";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+
+function buildReviewsListUrl(userId: string, page: number): string {
+  const base = `/profile/${userId}/reviews`;
+  if (page <= 1) {
+    return base;
+  }
+  return `${base}?page=${page}`;
+}
 
 type Props = {
   targetUserId: string;
@@ -10,6 +22,10 @@ type Props = {
   isAllowed: boolean;
   existingReview: ExistingReviewSummary | null;
   reviews: ReviewListItem[];
+  pagination: {
+    currentPage: number;
+    totalPages: number;
+  };
 };
 
 export function ProfileReviewsSection({
@@ -18,8 +34,10 @@ export function ProfileReviewsSection({
   isAllowed,
   existingReview,
   reviews,
+  pagination,
 }: Props) {
   const isOwnProfile = currentUserId !== null && currentUserId === targetUserId;
+  const showPaginationNav = pagination.totalPages > 1;
 
   return (
     <div className="grid gap-10">
@@ -48,6 +66,35 @@ export function ProfileReviewsSection({
           ))
         )}
       </div>
+
+      {showPaginationNav ? (
+        <nav
+          className={cn(
+            "mt-8 flex w-full flex-wrap items-center gap-3",
+            pagination.currentPage === 1
+              ? "justify-end"
+              : pagination.currentPage === pagination.totalPages
+                ? "justify-start"
+                : "justify-between",
+          )}
+          aria-label="Пагінація відгуків"
+        >
+          {pagination.currentPage > 1 ? (
+            <Button type="button" variant="outline" className="min-w-[11rem] cursor-pointer" asChild>
+              <Link href={buildReviewsListUrl(targetUserId, pagination.currentPage - 1)} scroll={false}>
+                Попередня
+              </Link>
+            </Button>
+          ) : null}
+          {pagination.currentPage < pagination.totalPages ? (
+            <Button type="button" variant="outline" className="min-w-[11rem] cursor-pointer" asChild>
+              <Link href={buildReviewsListUrl(targetUserId, pagination.currentPage + 1)} scroll={false}>
+                Наступна
+              </Link>
+            </Button>
+          ) : null}
+        </nav>
+      ) : null}
     </div>
   );
 }

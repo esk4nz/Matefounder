@@ -39,10 +39,10 @@ export type ReviewListItem = {
 export type GetReviewsResult =
   | {
       ok: true;
-      reviews: ReviewListItem[];
-      totalCount: number;
-      page: number;
-      pageSize: number;
+      data: ReviewListItem[];
+      count: number;
+      totalPages: number;
+      currentPage: number;
     }
   | { ok: false; message: string };
 
@@ -177,7 +177,7 @@ export async function getReviewsAction(targetId: string, page: number = 1): Prom
     }
   }
 
-  const reviews: ReviewListItem[] = list.map((r) => ({
+  const data: ReviewListItem[] = list.map((r) => ({
     id: Number(r.id),
     author_id: r.author_id,
     target_id: r.target_id,
@@ -188,12 +188,15 @@ export async function getReviewsAction(targetId: string, page: number = 1): Prom
     author: authorsById.get(r.author_id) ?? null,
   }));
 
+  const total = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / REVIEWS_PAGE_SIZE));
+
   return {
     ok: true,
-    reviews,
-    totalCount: count ?? 0,
-    page: safePage,
-    pageSize: REVIEWS_PAGE_SIZE,
+    data,
+    count: total,
+    totalPages,
+    currentPage: safePage,
   };
 }
 
