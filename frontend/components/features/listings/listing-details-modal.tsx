@@ -2,7 +2,7 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { MapPinIcon } from "lucide-react";
+import { Flag, MapPinIcon } from "lucide-react";
 
 import {
   PROFILE_EXCLUSIVE_CATEGORIES,
@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ListingPhotoCarousel } from "@/components/features/listings/listing-photo-carousel";
+import { ReportDialog } from "@/components/features/reports/report-dialog";
 import {
   isListingPhotoLightboxLayerOpen,
   isListingPhotoLightboxTarget,
@@ -115,6 +116,8 @@ export function ListingDetailsModal({
   seekerFooter,
 }: ListingDetailsModalProps) {
   const showSeekerFooter = Boolean(listing && listing.creatorId !== currentUserId && seekerFooter);
+  const showListingReport =
+    Boolean(listing && listing.creatorId !== currentUserId) && !loading;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -144,14 +147,33 @@ export function ListingDetailsModal({
       >
         <>
           <DialogHeader className="shrink-0 flex flex-row items-start justify-between gap-3 border-b border-border px-5 py-4 space-y-0">
-            <DialogTitle className="min-w-0 flex-1 text-left text-lg font-bold leading-snug text-slate-900">
+            <DialogTitle className="min-w-0 flex-1 pr-2 text-left text-lg font-bold leading-snug text-slate-900">
               {listing?.title ?? fallbackTitle ?? <SkeletonBlock className="h-7 w-72 max-w-full" />}
             </DialogTitle>
-            {!loading && listing?.similarityScore != null ? (
-              <span className="shrink-0 pt-0.5 text-sm font-semibold text-slate-700">
-                Схожість: {listing.similarityScore}%
-              </span>
-            ) : null}
+            <div className="flex shrink-0 items-center gap-1 pt-0.5">
+              {showListingReport && listing ? (
+                <ReportDialog
+                  targetUserId={listing.creatorId}
+                  targetListingId={listing.id}
+                  trigger={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8 shrink-0 text-muted-foreground hover:text-slate-900"
+                      aria-label="Поскаржитись на оголошення"
+                    >
+                      <Flag className="size-4" />
+                    </Button>
+                  }
+                />
+              ) : null}
+              {!loading && listing?.similarityScore != null ? (
+                <span className="shrink-0 text-sm font-semibold whitespace-nowrap text-slate-700">
+                  Схожість: {listing.similarityScore}%
+                </span>
+              ) : null}
+            </div>
           </DialogHeader>
 
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain [scrollbar-gutter:stable]">

@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { Star, Trash2, UserRound } from "lucide-react";
+import { Flag, Star, Trash2, UserRound } from "lucide-react";
 
 import { deleteReviewAction, type ReviewListItem } from "@/app/actions/reviews";
+import { ReportDialog } from "@/components/features/reports/report-dialog";
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -54,6 +55,7 @@ export function ReviewCard({ review, currentUserId }: Props) {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const isOwn = currentUserId !== null && review.author_id === currentUserId;
+  const canReport = currentUserId !== null && !isOwn;
   const name = authorDisplayName(review);
   const avatarUrl = review.author?.avatarUrl ?? null;
   const profileReviewsHref = `/profile/${review.author_id}/reviews`;
@@ -114,6 +116,24 @@ export function ReviewCard({ review, currentUserId }: Props) {
                     />
                   ))}
                 </div>
+
+                {canReport ? (
+                  <ReportDialog
+                    targetUserId={review.author_id}
+                    targetReviewId={review.id}
+                    trigger={
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="size-9 shrink-0 cursor-pointer text-muted-foreground hover:text-slate-900"
+                        aria-label="Поскаржитись на відгук"
+                      >
+                        <Flag className="size-4" />
+                      </Button>
+                    }
+                  />
+                ) : null}
 
                 {isOwn ? (
                   <Button

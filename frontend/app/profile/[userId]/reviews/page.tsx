@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 
+import { checkBlockStatusAction } from "@/app/actions/blocks";
 import { checkReviewEligibilityAction, getReviewsAction } from "@/app/actions/reviews";
 import { REVIEWS_PAGE_SIZE } from "@/app/schemas/reviews";
 import { ProfileReviewsSection } from "@/components/features/reviews/profile-reviews-section";
@@ -41,7 +42,7 @@ export default async function ReviewsPublicPage({ params, searchParams }: Review
     redirect(`/login?next=${encodeURIComponent(`/profile/${userId}/reviews`)}`);
   }
 
-  const [profileRes, tagsRes, reviewsRes, eligibility] = await Promise.all([
+  const [profileRes, tagsRes, reviewsRes, eligibility, isBlockedByMe] = await Promise.all([
     supabase
       .from("profiles")
       .select("id, username, first_name, last_name, avatar_path, bio, rating, reviews_count")
@@ -53,6 +54,7 @@ export default async function ReviewsPublicPage({ params, searchParams }: Review
       .eq("profile_id", userId),
     getReviewsAction(userId, page),
     checkReviewEligibilityAction(userId),
+    checkBlockStatusAction(userId),
   ]);
 
   const { data: profile, error: profileError } = profileRes;
@@ -110,6 +112,9 @@ export default async function ReviewsPublicPage({ params, searchParams }: Review
     <section className={PAGE_SHELL_CLASS}>
       <div className="space-y-10">
         <ReviewsSubjectHeader
+          subjectUserId={userId}
+          isBlockedByMe={isBlockedByMe}
+          showModerationActions={user.id !== userId}
           displayName={displayName}
           subtitle={subtitle}
           avatarUrl={avatarUrl}

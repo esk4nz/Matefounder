@@ -1,10 +1,26 @@
-import { UserRound } from "lucide-react";
+"use client";
 
+import { MoreVertical, UserRound } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+
+import { blockUserAction, unblockUserAction } from "@/app/actions/blocks";
+import { ReportDialog } from "@/components/features/reports/report-dialog";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 
 type Props = {
+  subjectUserId: string;
+  isBlockedByMe: boolean;
+  showModerationActions: boolean;
   displayName: string;
   subtitle: string;
   avatarUrl: string | null;
@@ -41,6 +57,9 @@ function reviewCountLabel(count: number): string {
 }
 
 export function ReviewsSubjectHeader({
+  subjectUserId,
+  isBlockedByMe,
+  showModerationActions,
   displayName,
   subtitle,
   avatarUrl,
@@ -49,7 +68,26 @@ export function ReviewsSubjectHeader({
   bio,
   tags,
 }: Props) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [reportOpen, setReportOpen] = useState(false);
+  const [menuError, setMenuError] = useState<string | null>(null);
+
   const ratingLabel = formatPublicRating(rating);
+
+  const handleBlockToggle = () => {
+    setMenuError(null);
+    startTransition(async () => {
+      const res = isBlockedByMe
+        ? await unblockUserAction(subjectUserId)
+        : await blockUserAction(subjectUserId);
+      if (!res.ok) {
+        setMenuError(res.error);
+        return;
+      }
+      router.refresh();
+    });
+  };
 
   return (
     <Card className="border-none bg-white shadow-[0_18px_50px_-20px_rgba(15,23,42,0.18)] ring-1 ring-slate-200/80">
@@ -65,36 +103,94 @@ export function ReviewsSubjectHeader({
         </div>
 
         <div className="min-w-0 flex-1 space-y-4">
-          <div>
-            <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
-              {displayName}
-            </h1>
-            <p className="mt-1 text-sm font-medium text-slate-500">{subtitle}</p>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <h1 className="text-2xl font-black tracking-tight text-slate-900 sm:text-3xl">
+                {displayName}
+              </h1>
+              <p className="mt-1 text-sm font-medium text-slate-500">{subtitle}</p>
+            </div>
+
+            {showModerationActions ? (
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <DropdownMenu
+                  onOpenChange={(next) => {
+                    if (next) {
+                      setMenuError(null);
+                    }
+                  }}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 shrink-0 cursor-pointer text-slate-600"
+                      aria-label="Дії щодо профілю"
+                      disabled={pending}
+                    >
+                      <MoreVertical className="size-5" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="min-w-52">
+                    <DropdownMenuItem
+                      className="cursor-pointer"
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        setReportOpen(true);
+                      }}
+                    >
+                      Поскаржитись на користувача
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      className={cn("cursor-pointer", !isBlockedByMe && "text-red-600 focus:text-red-600")}
+                      disabled={pending}
+                      onSelect={(e) => {
+                        e.preventDefault();
+                        handleBlockToggle();
+                      }}
+                    >
+                      {isBlockedByMe ? "Розблокувати" : "Заблокувати"}
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <ReportDialog
+                  targetUserId={subjectUserId}
+                  open={reportOpen}
+                  onOpenChange={setReportOpen}
+                />
+              </div>
+            ) : null}
           </div>
 
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            {rating > 0 ? (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 font-bold text-amber-900 ring-1 ring-amber-200/80">
-                <span aria-hidden className="text-amber-500">
-                  ★
+          <div className="space-y-1.5">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              {rating > 0 ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 font-bold text-amber-900 ring-1 ring-amber-200/80">
+                  <span aria-hidden className="text-amber-500">
+                    ★
+                  </span>
+                  <span>{ratingLabel}</span>
+                  <span className="font-semibold text-amber-800/90">
+                    ({reviewCountLabel(reviewsCount)})
+                  </span>
                 </span>
-                <span>{ratingLabel}</span>
-                <span className="font-semibold text-amber-800/90">
-                  ({reviewCountLabel(reviewsCount)})
+              ) : (
+                <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600 ring-1 ring-slate-200/80">
+                  Немає оцінок
                 </span>
-              </span>
-            ) : (
-              <span className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600 ring-1 ring-slate-200/80">
-                Немає оцінок
-              </span>
-            )}
+              )}
+            </div>
+            {menuError ? (
+              <p className="text-sm font-medium text-red-600" role="alert">
+                {menuError}
+              </p>
+            ) : null}
           </div>
 
           {tags.length > 0 ? (
             <div className="space-y-2">
-              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">
-                Теги
-              </p>
+              <p className="text-xs font-black uppercase tracking-[0.16em] text-slate-500">Теги</p>
               <div className="flex flex-wrap gap-2">
                 {tags.map((tag) => (
                   <span
