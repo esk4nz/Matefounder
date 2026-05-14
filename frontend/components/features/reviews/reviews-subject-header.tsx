@@ -5,6 +5,11 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 
 import { blockUserAction, unblockUserAction } from "@/app/actions/blocks";
+import {
+  BLOCK_USER_ALREADY_BLOCKED_MESSAGE,
+  UNBLOCK_USER_ALREADY_UNBLOCKED_MESSAGE,
+  persistBlockSyncNotice,
+} from "@/lib/block-messages";
 import { ReportDialog } from "@/components/features/reports/report-dialog";
 import type { ProfileTagRow } from "@/components/features/profile/profile-types";
 import { Button } from "@/components/ui/button";
@@ -82,6 +87,12 @@ export function ReviewsSubjectHeader({
         ? await unblockUserAction(subjectUserId)
         : await blockUserAction(subjectUserId);
       if (!res.ok) {
+        if (
+          res.error === BLOCK_USER_ALREADY_BLOCKED_MESSAGE ||
+          res.error === UNBLOCK_USER_ALREADY_UNBLOCKED_MESSAGE
+        ) {
+          persistBlockSyncNotice(res.error);
+        }
         setMenuError(res.error);
         return;
       }

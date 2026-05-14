@@ -4,6 +4,10 @@ import { revalidatePath } from "next/cache";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 import { reviewTargetIdSchema } from "@/app/schemas/reviews";
+import {
+  BLOCK_USER_ALREADY_BLOCKED_MESSAGE,
+  UNBLOCK_USER_ALREADY_UNBLOCKED_MESSAGE,
+} from "@/lib/block-messages";
 import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
@@ -100,6 +104,7 @@ async function assertBlockerNotAdminBlocked(blockerId: string): Promise<BlockMut
 function revalidateBlockRelatedPaths(targetUserId: string) {
   revalidatePath(`/profile/${targetUserId}/reviews`);
   revalidatePath("/listings");
+  revalidatePath("/profile");
 }
 
 export async function blockUserAction(targetUserId: string): Promise<BlockMutationResult> {
@@ -139,7 +144,7 @@ export async function blockUserAction(targetUserId: string): Promise<BlockMutati
   if (existingBlock) {
     return {
       ok: false,
-      error: "Ви вже заблокували цього користувача. Оновіть сторінку.",
+      error: BLOCK_USER_ALREADY_BLOCKED_MESSAGE,
     };
   }
 
@@ -192,7 +197,7 @@ export async function unblockUserAction(targetUserId: string): Promise<BlockMuta
   if (typeof count === "number" && count === 0) {
     return {
       ok: false,
-      error: "Користувач вже розблокований. Оновіть сторінку.",
+      error: UNBLOCK_USER_ALREADY_UNBLOCKED_MESSAGE,
     };
   }
 

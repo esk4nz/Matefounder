@@ -31,6 +31,7 @@ import {
   profilePasswordSchema,
   profileSetPasswordSchema,
 } from "@/app/schemas/profile";
+import { ProfileBlockedUsersCard } from "@/components/features/profile/profile-blocked-users-card";
 import { ProfileDangerZoneCard } from "@/components/features/profile/profile-danger-zone-card";
 import { ProfileDetailsCard } from "@/components/features/profile/profile-details-card";
 import { ProfileEmailCard } from "@/components/features/profile/profile-email-card";
@@ -51,6 +52,7 @@ export function ProfileSettings({
   canDeleteWithPassword,
   hasPassword,
   isAdmin,
+  blockedUsers,
 }: ProfileSettingsProps) {
   const router = useRouter();
   const objectUrlRef = useRef<string | null>(null);
@@ -504,6 +506,15 @@ export function ProfileSettings({
               onToggleConfirmPassword={() => setShowConfirmPassword((value) => !value)}
             />
           )}
+
+          <ProfileBlockedUsersCard
+            key={blockedUsers
+              .map((u) => u.id)
+              .slice()
+              .sort()
+              .join(",")}
+            initialBlockedUsers={blockedUsers}
+          />
 
           <ProfileDangerZoneCard
             form={deleteForm}
