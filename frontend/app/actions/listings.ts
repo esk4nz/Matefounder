@@ -131,27 +131,33 @@ function messageForPeerGateFailure(gate: Extract<PeerGateResult, { ok: false }>)
   return LISTING_UNAVAILABLE_MESSAGE;
 }
 
+type ListingPeerGateMode = "default" | "allow_opponent_block";
+
 async function gateListingPeerInteraction(
   supabase: Awaited<ReturnType<typeof createClient>>,
   actorId: string,
   opponentId: string,
-  _mode: "default" | "strict" = "default",
+  mode: ListingPeerGateMode = "default",
 ): Promise<PeerGateResult> {
-  void _mode;
-  const [
-    { data: opponentProfile },
-    { data: actorProfile },
-    { data: blockedByActor },
-    { data: blockedByOpponent },
-  ] = await Promise.all([
+  const [{ data: opponentProfile }, { data: actorProfile }] = await Promise.all([
     supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
     supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
-    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", actorId).eq("blocked_id", opponentId).maybeSingle(),
-    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
   ]);
 
   if (actorProfile?.is_blocked === true || opponentProfile?.is_blocked === true) {
     return { ok: false, reason: "global_profile_block" };
+  }
+
+  const [{ data: blockedByActor }, { data: blockedByOpponent }] = await Promise.all([
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", actorId).eq("blocked_id", opponentId).maybeSingle(),
+    supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
+  ]);
+
+  if (mode === "allow_opponent_block") {
+    if (blockedByActor) {
+      return { ok: false, reason: "peer_user_block" };
+    }
+    return { ok: true };
   }
 
   if (blockedByActor || blockedByOpponent) {
@@ -166,18 +172,12 @@ async function gateUnblockListingAuthorPeer(
   actorId: string,
   opponentId: string,
 ): Promise<{ ok: true } | { ok: false }> {
-  const [{ data: opponentProfile }, { data: actorProfile }, { data: blockedByOpponent }] =
-    await Promise.all([
-      supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
-      supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
-      supabase.from("user_blocks").select("blocker_id").eq("blocker_id", opponentId).eq("blocked_id", actorId).maybeSingle(),
-    ]);
+  const [{ data: opponentProfile }, { data: actorProfile }] = await Promise.all([
+    supabase.from("profiles").select("is_blocked").eq("id", opponentId).maybeSingle(),
+    supabase.from("profiles").select("is_blocked").eq("id", actorId).maybeSingle(),
+  ]);
 
   if (actorProfile?.is_blocked === true || opponentProfile?.is_blocked === true) {
-    return { ok: false };
-  }
-
-  if (blockedByOpponent) {
     return { ok: false };
   }
 
@@ -1457,7 +1457,7 @@ export async function getIncomingRequestsAction(listingId: string): Promise<GetI
 
     const seekerBlockedMe = seekerIdsWhoBlockedMe.has(seekerId);
     const iBlockedSeeker = iBlockedSeekerIds.has(seekerId);
-    if (seekerBlockedMe && !iBlockedSeeker) {
+    if (seekerBlockedMe && !iBlockedSeeker && st !== "accepted") {
       continue;
     }
 
@@ -1484,6 +1484,7 @@ export async function getIncomingRequestsAction(listingId: string): Promise<GetI
       seekerLastName,
       seekerAvatarUrl,
       iBlockedSeeker,
+      seekerBlockedMe,
     });
   }
 
@@ -1528,14 +1529,14 @@ export async function createListingRequestAction(
     return { ok: false, message: LISTING_UNAVAILABLE_MESSAGE };
   }
 
-  if (listing.updated_at !== expectedListingUpdatedAt) {
-    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
-  }
-
   const creatorId = listing.creator_id as string;
-  const peerGate = await gateListingPeerInteraction(supabase, user.id, creatorId);
+  const peerGate = await gateListingPeerInteraction(supabase, user.id, creatorId, "default");
   if (!peerGate.ok) {
     return { ok: false, message: messageForPeerGateFailure(peerGate) };
+  }
+
+  if (listing.updated_at !== expectedListingUpdatedAt) {
+    return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
   const insertPayload: {
@@ -1593,7 +1594,12 @@ export async function cancelListingRequestAction(
     .maybeSingle();
 
   if (listingForGate && typeof listingForGate.creator_id === "string") {
-    const cancelGate = await gateListingPeerInteraction(supabase, user.id, listingForGate.creator_id);
+    const cancelGate = await gateListingPeerInteraction(
+      supabase,
+      user.id,
+      listingForGate.creator_id,
+      "default",
+    );
     if (!cancelGate.ok) {
       return { ok: false, message: messageForPeerGateFailure(cancelGate) };
     }
@@ -1667,7 +1673,12 @@ export async function blockListingAuthorAction(
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  const blockGate = await gateListingPeerInteraction(supabase, user.id, listing.creator_id as string);
+  const blockGate = await gateListingPeerInteraction(
+    supabase,
+    user.id,
+    listing.creator_id as string,
+    "allow_opponent_block",
+  );
   if (!blockGate.ok) {
     return { ok: false, message: messageForPeerGateFailure(blockGate) };
   }
@@ -1862,7 +1873,7 @@ export async function getOwnerSeekerContactsAction(
     return { ok: false, reason: "forbidden", message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  const contactsGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker, "strict");
+  const contactsGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker);
   if (!contactsGate.ok) {
     return { ok: false, reason: "forbidden", message: messageForPeerGateFailure(contactsGate) };
   }
@@ -1972,7 +1983,12 @@ export async function blockListingSeekerAction(
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  const blockGate = await gateListingPeerInteraction(supabase, user.id, trimmedSeeker, "strict");
+  const blockGate = await gateListingPeerInteraction(
+    supabase,
+    user.id,
+    trimmedSeeker,
+    "allow_opponent_block",
+  );
   if (!blockGate.ok) {
     return { ok: false, message: messageForPeerGateFailure(blockGate) };
   }
@@ -2257,7 +2273,12 @@ export async function ownerRespondToListingRequestAction(
     return { ok: false, message: STALE_SEEKER_STATE_MESSAGE };
   }
 
-  const ownerGate = await gateListingPeerInteraction(supabase, user.id, reqRow.initiator_id, "strict");
+  const ownerGate = await gateListingPeerInteraction(
+    supabase,
+    user.id,
+    reqRow.initiator_id,
+    decision === "rejected" ? "allow_opponent_block" : "default",
+  );
   if (!ownerGate.ok) {
     return { ok: false, message: messageForPeerGateFailure(ownerGate) };
   }
