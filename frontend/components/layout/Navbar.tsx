@@ -63,16 +63,6 @@ export default async function Navbar() {
                 </Link>
               </>
             ) : null}
-            <Link
-              href="/how-it-works"
-              className={
-                user?.id
-                  ? "hidden xl:inline text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
-                  : "text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
-              }
-            >
-              Як це працює
-            </Link>
             <NavbarAdminLinks initialIsAdmin={isAdmin} hasUser={Boolean(user?.id)} />
           </div>
         </div>

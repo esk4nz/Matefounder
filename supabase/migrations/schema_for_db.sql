@@ -29,6 +29,7 @@ drop function if exists public.username_is_taken(text) cascade;
 drop function if exists public.admin_console_list_users(text, integer, integer) cascade;
 drop function if exists public.review_allowed_by_request(uuid, uuid) cascade;
 drop function if exists public.update_profile_rating() cascade;
+drop function if exists public.recalculate_ratings_on_author_block() cascade;
 drop function if exists public.seeker_has_request_for_listing(uuid) cascade;
 drop function if exists public.seeker_has_accepted_request_for_listing(uuid) cascade;
 drop function if exists public.seeker_has_visibility_override_for_listing(uuid) cascade;
@@ -192,13 +193,18 @@ create table public.reports (
   target_user_id uuid not null references public.profiles (id) on delete cascade,
   target_review_id bigint references public.reviews (id) on delete set null,
   target_listing_id uuid references public.listings (id) on delete set null,
+  report_subject text not null default 'profile'
+    check (report_subject in ('profile', 'listing', 'review')),
   reason text not null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
   status text not null default 'open'
     check (status in ('open', 'reviewed', 'dismissed'))
 );
 
 create index if not exists reports_status_idx on public.reports (status);
 create index if not exists reports_target_listing_id_idx on public.reports (target_listing_id);
+create index if not exists reports_created_at_idx on public.reports (created_at desc);
 
 create table public.user_blocks (
   blocker_id uuid not null references public.profiles (id) on delete cascade,
@@ -278,6 +284,10 @@ create trigger reviews_set_updated_at
   before update on public.reviews
   for each row execute procedure public.set_updated_at();
 
+create trigger reports_set_updated_at
+  before update on public.reports
+  for each row execute procedure public.set_updated_at();
+
 create or replace function public.update_profile_rating()
 returns trigger
 language plpgsql
@@ -329,6 +339,52 @@ revoke all on function public.update_profile_rating() from public;
 create trigger reviews_update_profile_rating
   after insert or update or delete on public.reviews
   for each row execute procedure public.update_profile_rating();
+
+create or replace function public.recalculate_ratings_on_author_block()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  tid uuid;
+  agg_rating double precision;
+  agg_count integer;
+begin
+  if new.is_blocked is not distinct from old.is_blocked then
+    return new;
+  end if;
+
+  for tid in
+    select distinct r.target_id
+    from public.reviews r
+    where r.author_id = new.id
+  loop
+    select
+      coalesce(avg(r.rating)::double precision, 0),
+      coalesce(count(*)::integer, 0)
+    into agg_rating, agg_count
+    from public.reviews r
+    inner join public.profiles pa on pa.id = r.author_id
+    where r.target_id = tid
+      and pa.is_blocked = false;
+
+    update public.profiles pr
+    set
+      rating = agg_rating,
+      reviews_count = agg_count
+    where pr.id = tid;
+  end loop;
+
+  return new;
+end;
+$$;
+
+revoke all on function public.recalculate_ratings_on_author_block() from public;
+
+create trigger trigger_recalculate_ratings_on_block
+  after update of is_blocked on public.profiles
+  for each row execute procedure public.recalculate_ratings_on_author_block();
 
 create or replace function public.username_is_taken(candidate text)
 returns boolean

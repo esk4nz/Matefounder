@@ -114,6 +114,17 @@ function isRowLevelSecurityViolation(error: PostgrestError | null): boolean {
   return blob.includes("row-level security");
 }
 
+type ReviewRowWithProfileFilter = {
+  id: number | string;
+  author_id: string;
+  target_id: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+  updated_at: string | null;
+  profiles?: { is_blocked: boolean } | { is_blocked: boolean }[] | null;
+};
+
 export async function getReviewsAction(targetId: string, page: number = 1): Promise<GetReviewsResult> {
   const idParse = reviewTargetIdSchema.safeParse(targetId);
   if (!idParse.success) {
@@ -136,8 +147,12 @@ export async function getReviewsAction(targetId: string, page: number = 1): Prom
 
   const { data: rows, error, count } = await supabase
     .from("reviews")
-    .select("id, author_id, target_id, rating, comment, created_at, updated_at", { count: "exact" })
+    .select(
+      "id, author_id, target_id, rating, comment, created_at, updated_at, profiles!reviews_author_id_fkey!inner(is_blocked)",
+      { count: "exact" },
+    )
     .eq("target_id", targetId)
+    .eq("profiles.is_blocked", false)
     .order("created_at", { ascending: false })
     .range(from, to);
 
@@ -145,7 +160,11 @@ export async function getReviewsAction(targetId: string, page: number = 1): Prom
     return { ok: false, message: mapSupabaseError(error.message) };
   }
 
-  const list = rows ?? [];
+  const list = (rows ?? []).map((row) => {
+    const { profiles, ...rest } = row as ReviewRowWithProfileFilter;
+    void profiles;
+    return rest;
+  });
   const authorIds = [...new Set(list.map((r) => r.author_id))];
   let authorsById = new Map<string, ReviewAuthorPublic>();
 

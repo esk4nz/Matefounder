@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 import { createReportPayloadSchema } from "@/app/schemas/reports";
+import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 export type CreateReportResult = { ok: true } | { ok: false; error: string };
@@ -39,7 +40,7 @@ function isRowLevelSecurityViolation(error: PostgrestError | null): boolean {
 }
 
 const DUPLICATE_OPEN_REPORT_MESSAGE =
-  "Ви вже надіслали скаргу на цей об'єкт. Вона очікує на розгляд модераторами.";
+  "Ви вже надіслали скаргу на цей об'єкт. Вона очікує на розгляд.";
 
 export async function createReportAction(payload: unknown): Promise<CreateReportResult> {
   const parsed = createReportPayloadSchema.safeParse(payload);
@@ -60,7 +61,25 @@ export async function createReportAction(payload: unknown): Promise<CreateReport
     return { ok: false, error: "Не можна надіслати скаргу на власний профіль." };
   }
 
-  let dupQuery = supabase
+  const admin = createServiceRoleClient();
+
+  const { data: targetProfile, error: targetProfileErr } = await admin
+    .from("profiles")
+    .select("is_blocked")
+    .eq("id", parsed.data.targetUserId)
+    .maybeSingle();
+
+  if (targetProfileErr) {
+    return { ok: false, error: mapSupabaseError(targetProfileErr.message) };
+  }
+  if (targetProfile?.is_blocked === true) {
+    return {
+      ok: false,
+      error: "Цей користувач вже заблокований адміністрацією. Дякуємо за пильність!",
+    };
+  }
+
+  let dupQuery = admin
     .from("reports")
     .select("id")
     .eq("reporter_id", user.id)
@@ -89,10 +108,18 @@ export async function createReportAction(payload: unknown): Promise<CreateReport
     return { ok: false, error: DUPLICATE_OPEN_REPORT_MESSAGE };
   }
 
+  const reportSubject =
+    parsed.data.targetReviewId != null
+      ? "review"
+      : parsed.data.targetListingId != null
+        ? "listing"
+        : "profile";
+
   const row: Record<string, unknown> = {
     reporter_id: user.id,
     target_user_id: parsed.data.targetUserId,
     reason: parsed.data.reason,
+    report_subject: reportSubject,
   };
   if (parsed.data.targetReviewId != null) {
     row.target_review_id = parsed.data.targetReviewId;
