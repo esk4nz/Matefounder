@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { User as UserIcon, Search } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -44,6 +45,34 @@ type AdminUsersTabProps = {
 
 function canModerateRow(user: AdminUserRow, currentUserId: string) {
   return user.id !== currentUserId && !user.isAdmin;
+}
+
+function AdminUserProfileLink({
+  userId,
+  username,
+  avatarUrl,
+}: {
+  userId: string;
+  username: string;
+  avatarUrl: string | null;
+}) {
+  return (
+    <Link
+      href={`/profile/${userId}/reviews`}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex min-w-0 max-w-[280px] items-center gap-2 text-foreground no-underline hover:underline"
+    >
+      <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
+        {avatarUrl ? (
+          <img src={avatarUrl} alt="" className="size-9 object-cover" />
+        ) : (
+          <UserIcon className="size-4 text-muted-foreground" aria-hidden />
+        )}
+      </div>
+      <span className="min-w-0 truncate font-medium">{username}</span>
+    </Link>
+  );
 }
 
 function UserStatusText({ user }: { user: AdminUserRow }) {
@@ -281,14 +310,11 @@ export function AdminUsersTab({
           ref={scrollRef}
           className="max-h-[min(70vh,36rem)] overflow-x-auto overflow-y-auto rounded-xl border border-border ring-1 ring-foreground/10"
         >
-          <table className="w-full min-w-[640px] border-collapse text-sm">
+          <table className="w-full min-w-[560px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-left">
-                <th className="w-14 px-3 py-3 font-medium text-foreground" scope="col">
-                  <span className="sr-only">Аватар</span>
-                </th>
                 <th className="px-3 py-3 font-medium text-foreground" scope="col">
-                  Логін
+                  Користувач
                 </th>
                 <th className="px-3 py-3 font-medium text-foreground" scope="col">
                   Пошта
@@ -304,13 +330,13 @@ export function AdminUsersTab({
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-muted-foreground">
+                  <td colSpan={4} className="px-3 py-10 text-center text-muted-foreground">
                     Завантаження…
                   </td>
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-10 text-center text-muted-foreground">
+                  <td colSpan={4} className="px-3 py-10 text-center text-muted-foreground">
                     Користувачів не знайдено
                   </td>
                 </tr>
@@ -320,23 +346,11 @@ export function AdminUsersTab({
                   return (
                     <tr key={u.id} className="border-b border-border last:border-0">
                       <td className="px-3 py-2 align-middle">
-                        <div className="flex size-9 items-center justify-center overflow-hidden rounded-full bg-muted">
-                          {u.avatarUrl ? (
-                            <img
-                              src={u.avatarUrl}
-                              alt=""
-                              className="size-9 object-cover"
-                            />
-                          ) : (
-                            <UserIcon
-                              className="size-4 text-muted-foreground"
-                              aria-hidden
-                            />
-                          )}
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 align-middle font-medium text-foreground">
-                        {u.username}
+                        <AdminUserProfileLink
+                          userId={u.id}
+                          username={u.username}
+                          avatarUrl={u.avatarUrl}
+                        />
                       </td>
                       <td className="max-w-[200px] truncate px-3 py-2 align-middle text-muted-foreground">
                         {u.email || "—"}
@@ -424,11 +438,11 @@ export function AdminUsersTab({
           <DialogHeader>
             <DialogTitle>Підтвердження пароля</DialogTitle>
             <DialogDescription>
-              Введіть пароль вашого облікового запису, щоб надати цьому користувачу{" "}"
+              Введіть пароль вашого облікового запису, щоб надати цьому користувачу «
               <span className="font-semibold text-foreground">
                 {adminRoleTarget?.username ?? "—"}
-              </span>"{" "}
-              права адміністратора.
+              </span>
+              » права адміністратора.
             </DialogDescription>
           </DialogHeader>
           <form

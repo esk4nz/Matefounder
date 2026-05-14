@@ -15,7 +15,13 @@ import {
   upsertReviewPayloadSchema,
   upsertReviewUpdatePayloadSchema,
 } from "@/app/schemas/reviews";
+import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+
+const REVIEW_ACTION_AUTHOR_BLOCKED_MESSAGE =
+  "Ваш акаунт заблоковано. Дія недоступна.";
+const REVIEW_ACTION_TARGET_BLOCKED_MESSAGE =
+  "Цей користувач заблокований адміністрацією.";
 
 export type ReviewAuthorPublic = {
   id: string;
@@ -114,6 +120,54 @@ function isRowLevelSecurityViolation(error: PostgrestError | null): boolean {
   return blob.includes("row-level security");
 }
 
+async function assertReviewUpsertAllowedByBlockStatus(
+  authorId: string,
+  targetId: string,
+): Promise<MutationResult | null> {
+  let service;
+  try {
+    service = createServiceRoleClient();
+  } catch {
+    return { ok: false, message: "Сталася помилка. Спробуйте ще раз." };
+  }
+
+  const { data: rows, error } = await service
+    .from("profiles")
+    .select("id, is_blocked")
+    .in("id", [authorId, targetId]);
+
+  if (error) {
+    return { ok: false, message: mapSupabaseError(error.message) };
+  }
+
+  const blockedById = new Map(
+    (rows ?? []).map((r) => [r.id, r.is_blocked === true] as const),
+  );
+
+  if (!blockedById.has(authorId)) {
+    return { ok: false, message: "Сталася помилка. Спробуйте ще раз." };
+  }
+  if (blockedById.get(authorId) === true) {
+    return { ok: false, message: REVIEW_ACTION_AUTHOR_BLOCKED_MESSAGE };
+  }
+  if (blockedById.has(targetId) && blockedById.get(targetId) === true) {
+    return { ok: false, message: REVIEW_ACTION_TARGET_BLOCKED_MESSAGE };
+  }
+
+  return null;
+}
+
+type ReviewRowWithProfileFilter = {
+  id: number | string;
+  author_id: string;
+  target_id: string;
+  rating: number;
+  comment: string;
+  created_at: string;
+  updated_at: string | null;
+  profiles?: { is_blocked: boolean } | { is_blocked: boolean }[] | null;
+};
+
 export async function getReviewsAction(targetId: string, page: number = 1): Promise<GetReviewsResult> {
   const idParse = reviewTargetIdSchema.safeParse(targetId);
   if (!idParse.success) {
@@ -136,8 +190,12 @@ export async function getReviewsAction(targetId: string, page: number = 1): Prom
 
   const { data: rows, error, count } = await supabase
     .from("reviews")
-    .select("id, author_id, target_id, rating, comment, created_at, updated_at", { count: "exact" })
+    .select(
+      "id, author_id, target_id, rating, comment, created_at, updated_at, profiles!reviews_author_id_fkey!inner(is_blocked)",
+      { count: "exact" },
+    )
     .eq("target_id", targetId)
+    .eq("profiles.is_blocked", false)
     .order("created_at", { ascending: false })
     .range(from, to);
 
@@ -145,7 +203,11 @@ export async function getReviewsAction(targetId: string, page: number = 1): Prom
     return { ok: false, message: mapSupabaseError(error.message) };
   }
 
-  const list = rows ?? [];
+  const list = (rows ?? []).map((row) => {
+    const { profiles, ...rest } = row as ReviewRowWithProfileFilter;
+    void profiles;
+    return rest;
+  });
   const authorIds = [...new Set(list.map((r) => r.author_id))];
   let authorsById = new Map<string, ReviewAuthorPublic>();
 
@@ -293,6 +355,11 @@ export async function upsertReviewAction(
 
   if (user.id === parsed.data.targetId) {
     return { ok: false, message: "Неможливо залишити відгук самому собі." };
+  }
+
+  const blockGate = await assertReviewUpsertAllowedByBlockStatus(user.id, parsed.data.targetId);
+  if (blockGate) {
+    return blockGate;
   }
 
   const { data: existingRow, error: existingErr } = await supabase

@@ -67,17 +67,6 @@ export function NavbarUserMenu({ displayName }: Props) {
           >
             Профіль
           </Link>
-          <Link
-            role="menuitem"
-            href="/how-it-works"
-            className={cn(
-              buttonVariants({ variant: "ghost" }),
-              "flex h-auto w-full justify-start rounded-none px-3 py-2 font-medium text-slate-800 shadow-none cursor-pointer",
-            )}
-            onClick={() => setOpen(false)}
-          >
-            Допомога
-          </Link>
           <form action={signOutAction} className="border-t border-blue-50">
             <button
               type="submit"

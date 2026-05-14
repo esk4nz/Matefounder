@@ -44,16 +44,6 @@ export default async function Home({ searchParams }: HomeProps) {
           >
             Знайти сусіда <ChevronRight className="ml-2 h-4 w-4" />
           </Link>
-
-          <Link
-            href="/how-it-works"
-            className={cn(
-              buttonVariants({ variant: "outline", size: "lg" }),
-              "h-12 px-8 rounded-xl border-slate-200 text-base font-bold hover:bg-blue-50 hover:text-blue-600 transition-colors",
-            )}
-          >
-            Про технологію
-          </Link>
         </div>
       </div>
 
