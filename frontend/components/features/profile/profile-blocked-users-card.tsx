@@ -15,15 +15,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { BLOCK_SYNC_NOTICE_STORAGE_KEY } from "@/lib/block-messages";
 
 type Props = {
   initialBlockedUsers: BlockedUserListRow[];
@@ -47,9 +38,9 @@ export function ProfileBlockedUsersCard({ initialBlockedUsers }: Props) {
 
   useEffect(() => {
     try {
-      const raw = window.sessionStorage.getItem(BLOCK_SYNC_NOTICE_STORAGE_KEY);
+      const raw = window.sessionStorage.getItem("matefounder.blocks.syncNotice");
       if (raw) {
-        window.sessionStorage.removeItem(BLOCK_SYNC_NOTICE_STORAGE_KEY);
+        window.sessionStorage.removeItem("matefounder.blocks.syncNotice");
         queueMicrotask(() => {
           setSyncNotice(raw);
         });
@@ -90,34 +81,31 @@ export function ProfileBlockedUsersCard({ initialBlockedUsers }: Props) {
         ) : null}
 
         <div className="max-h-64 overflow-x-auto overflow-y-auto rounded-xl border border-border ring-1 ring-foreground/10">
-          <Table className="min-w-[320px]">
-            <TableHeader>
-              <TableRow className="border-b border-border bg-muted/50 hover:bg-muted/50">
-                <TableHead scope="col" className="px-3 py-3 font-medium text-foreground">
+          <table className="w-full min-w-[320px] border-collapse text-sm">
+            <thead>
+              <tr className="border-b border-border bg-muted/50 text-left">
+                <th className="px-3 py-3 font-medium text-foreground" scope="col">
                   Користувач
-                </TableHead>
-                <TableHead
-                  scope="col"
-                  className="px-3 py-3 text-center font-medium text-foreground"
-                >
+                </th>
+                <th className="px-3 py-3 text-center font-medium text-foreground" scope="col">
                   Дії
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
               {list.length === 0 ? (
-                <TableRow className="border-0 hover:bg-transparent">
-                  <TableCell colSpan={2} className="px-3 py-10 text-center text-muted-foreground">
+                <tr>
+                  <td colSpan={2} className="px-3 py-10 text-center text-muted-foreground">
                     У вас немає заблокованих користувачів.
-                  </TableCell>
-                </TableRow>
+                  </td>
+                </tr>
               ) : (
                 list.map((u) => {
                   const fullName = displayFullName(u.firstName, u.lastName);
                   const busy = pending && pendingUnblockId === u.id;
                   return (
-                    <TableRow key={u.id}>
-                      <TableCell className="px-3 py-2 align-middle">
+                    <tr key={u.id} className="border-b border-border last:border-0">
+                      <td className="px-3 py-2 align-middle">
                         <div className="flex min-w-0 max-w-[280px] items-center gap-2">
                           <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
                             {u.avatarUrl ? (
@@ -149,8 +137,8 @@ export function ProfileBlockedUsersCard({ initialBlockedUsers }: Props) {
                             </div>
                           </div>
                         </div>
-                      </TableCell>
-                      <TableCell className="min-w-[140px] px-3 py-2 align-middle">
+                      </td>
+                      <td className="min-w-[140px] px-3 py-2 align-middle">
                         <div className="flex justify-center">
                           <Button
                             type="button"
@@ -163,13 +151,13 @@ export function ProfileBlockedUsersCard({ initialBlockedUsers }: Props) {
                             {busy ? "…" : "Розблокувати"}
                           </Button>
                         </div>
-                      </TableCell>
-                    </TableRow>
+                      </td>
+                    </tr>
                   );
                 })
               )}
-            </TableBody>
-          </Table>
+            </tbody>
+          </table>
         </div>
       </CardContent>
     </Card>
