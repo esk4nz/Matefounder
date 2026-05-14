@@ -15,7 +15,13 @@ import {
   upsertReviewPayloadSchema,
   upsertReviewUpdatePayloadSchema,
 } from "@/app/schemas/reviews";
+import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+
+const REVIEW_ACTION_AUTHOR_BLOCKED_MESSAGE =
+  "Ваш акаунт заблоковано. Дія недоступна.";
+const REVIEW_ACTION_TARGET_BLOCKED_MESSAGE =
+  "Цей користувач заблокований адміністрацією.";
 
 export type ReviewAuthorPublic = {
   id: string;
@@ -112,6 +118,43 @@ function isRowLevelSecurityViolation(error: PostgrestError | null): boolean {
   }
   const blob = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
   return blob.includes("row-level security");
+}
+
+async function assertReviewUpsertAllowedByBlockStatus(
+  authorId: string,
+  targetId: string,
+): Promise<MutationResult | null> {
+  let service;
+  try {
+    service = createServiceRoleClient();
+  } catch {
+    return { ok: false, message: "Сталася помилка. Спробуйте ще раз." };
+  }
+
+  const { data: rows, error } = await service
+    .from("profiles")
+    .select("id, is_blocked")
+    .in("id", [authorId, targetId]);
+
+  if (error) {
+    return { ok: false, message: mapSupabaseError(error.message) };
+  }
+
+  const blockedById = new Map(
+    (rows ?? []).map((r) => [r.id, r.is_blocked === true] as const),
+  );
+
+  if (!blockedById.has(authorId)) {
+    return { ok: false, message: "Сталася помилка. Спробуйте ще раз." };
+  }
+  if (blockedById.get(authorId) === true) {
+    return { ok: false, message: REVIEW_ACTION_AUTHOR_BLOCKED_MESSAGE };
+  }
+  if (blockedById.has(targetId) && blockedById.get(targetId) === true) {
+    return { ok: false, message: REVIEW_ACTION_TARGET_BLOCKED_MESSAGE };
+  }
+
+  return null;
 }
 
 type ReviewRowWithProfileFilter = {
@@ -312,6 +355,11 @@ export async function upsertReviewAction(
 
   if (user.id === parsed.data.targetId) {
     return { ok: false, message: "Неможливо залишити відгук самому собі." };
+  }
+
+  const blockGate = await assertReviewUpsertAllowedByBlockStatus(user.id, parsed.data.targetId);
+  if (blockGate) {
+    return blockGate;
   }
 
   const { data: existingRow, error: existingErr } = await supabase
