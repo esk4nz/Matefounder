@@ -100,6 +100,7 @@ async function assertBlockerNotAdminBlocked(blockerId: string): Promise<BlockMut
 function revalidateBlockRelatedPaths(targetUserId: string) {
   revalidatePath(`/profile/${targetUserId}/reviews`);
   revalidatePath("/listings");
+  revalidatePath("/profile");
 }
 
 export async function blockUserAction(targetUserId: string): Promise<BlockMutationResult> {

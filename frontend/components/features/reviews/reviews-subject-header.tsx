@@ -82,6 +82,15 @@ export function ReviewsSubjectHeader({
         ? await unblockUserAction(subjectUserId)
         : await blockUserAction(subjectUserId);
       if (!res.ok) {
+        if (
+          res.error === "Ви вже заблокували цього користувача. Оновіть сторінку." ||
+          res.error === "Користувач вже розблокований. Оновіть сторінку."
+        ) {
+          try {
+            window.sessionStorage.setItem("matefounder.blocks.syncNotice", res.error);
+          } catch {
+          }
+        }
         setMenuError(res.error);
         return;
       }

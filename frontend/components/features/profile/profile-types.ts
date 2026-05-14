@@ -30,6 +30,14 @@ export type ProfileInitialData = {
   updatedAt: string;
 };
 
+export type BlockedUserListRow = {
+  id: string;
+  username: string;
+  firstName: string;
+  lastName: string;
+  avatarUrl: string | null;
+};
+
 export type ProfileSettingsProps = {
   initialEmail: string;
   initialProfile: ProfileInitialData;
@@ -38,4 +46,5 @@ export type ProfileSettingsProps = {
   canDeleteWithPassword: boolean;
   hasPassword: boolean;
   isAdmin: boolean;
+  blockedUsers: BlockedUserListRow[];
 };

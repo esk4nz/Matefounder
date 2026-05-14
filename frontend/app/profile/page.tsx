@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { ProfileSettings } from "@/components/features/profile/profile-settings";
 import { PAGE_SHELL_CLASS } from "@/lib/utils";
-import type { ProfileGenderForm, ProfileTagRow } from "@/components/features/profile/profile-types";
+import type { ProfileGenderForm, ProfileTagRow, BlockedUserListRow } from "@/components/features/profile/profile-types";
 import { buildInitialTagFormState } from "@/app/schemas/profile";
 import { userHasPassword } from "@/lib/auth/user";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
@@ -17,7 +17,7 @@ export default async function ProfilePage() {
     redirect("/");
   }
 
-  const [profileResult, tagsResult, profileTagsResult] = await Promise.all([
+  const [profileResult, tagsResult, profileTagsResult, blocksResult] = await Promise.all([
     supabase
       .from("profiles")
       .select(
@@ -31,11 +31,17 @@ export default async function ProfilePage() {
       .order("category_id", { ascending: true })
       .order("slug", { ascending: true }),
     supabase.from("profile_tags").select("tag_id").eq("profile_id", user.id),
+    supabase
+      .from("user_blocks")
+      .select("blocked_id, created_at")
+      .eq("blocker_id", user.id)
+      .order("created_at", { ascending: false }),
   ]);
 
   const profile = profileResult.data;
   const tagsRaw = tagsResult.data ?? [];
   const profileTagsRaw = profileTagsResult.data ?? [];
+  const blockRows = blocksResult.error ? [] : (blocksResult.data ?? []);
 
   if (!profile) {
     redirect("/?error=profile_not_found");
@@ -61,6 +67,38 @@ export default async function ProfilePage() {
   const lastNameFallback =
     profile.last_name || String(user.user_metadata?.last_name ?? user.user_metadata?.family_name ?? "");
 
+  const blockedIds = blockRows.map((row) => row.blocked_id);
+  let blockedUsers: BlockedUserListRow[] = [];
+  if (blockedIds.length > 0) {
+    const profRes = await supabase
+      .from("profiles")
+      .select("id, username, first_name, last_name, avatar_path")
+      .in("id", blockedIds);
+    const profileById = new Map((profRes.data ?? []).map((p) => [p.id, p] as const));
+    blockedUsers = blockRows.map((row) => {
+      const p = profileById.get(row.blocked_id);
+      if (!p) {
+        return {
+          id: row.blocked_id,
+          username: "",
+          firstName: "",
+          lastName: "",
+          avatarUrl: null,
+        };
+      }
+      const rowAvatarUrl = p.avatar_path
+        ? supabase.storage.from("profile-images").getPublicUrl(p.avatar_path).data.publicUrl
+        : null;
+      return {
+        id: p.id,
+        username: p.username ?? "",
+        firstName: p.first_name ?? "",
+        lastName: p.last_name ?? "",
+        avatarUrl: rowAvatarUrl,
+      };
+    });
+  }
+
   return (
     <section className={PAGE_SHELL_CLASS}>
     <ProfileSettings
@@ -84,6 +122,7 @@ export default async function ProfilePage() {
       canDeleteWithPassword={canDeleteWithPassword}
       hasPassword={hasPassword}
       isAdmin={isAdmin}
+      blockedUsers={blockedUsers}
     />
     </section>
   );
