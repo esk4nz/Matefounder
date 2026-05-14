@@ -10,6 +10,7 @@ export type OwnerIncomingRequestItem = {
   seekerLastName: string | null;
   seekerAvatarUrl: string | null;
   iBlockedSeeker: boolean;
+  seekerBlockedMe: boolean;
 };
 
 export type GetIncomingRequestsActionResult =

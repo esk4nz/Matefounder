@@ -132,11 +132,14 @@ export function OwnerSeekerRequestActions({
   }
 
   if (tab === "accepted") {
+    const hideContacts = request.status === "accepted" && request.seekerBlockedMe === true;
     return (
       <div className="flex max-w-[min(100vw-8rem,22rem)] flex-wrap items-center justify-end gap-1.5 sm:max-w-none">
-        <Button type="button" size="sm" disabled={busy} onClick={handleContacts}>
-          Контакти
-        </Button>
+        {!hideContacts ? (
+          <Button type="button" size="sm" disabled={busy} onClick={handleContacts}>
+            Контакти
+          </Button>
+        ) : null}
         <Button
           type="button"
           variant="secondary"
