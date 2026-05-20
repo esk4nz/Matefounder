@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { NavbarUserMenu } from "@/components/layout/navbar-user-menu";
 import { Button } from "@/components/ui/button";
+import { subscribeNavbarSync } from "@/lib/navbar-sync";
 import { createClient } from "@/lib/supabase/client";
 
 type Props = {
@@ -18,6 +19,7 @@ export function NavbarAuthControls({ initialEmail, initialDisplayName }: Props) 
   const [displayName, setDisplayName] = useState<string | null>(initialDisplayName);
 
   useEffect(() => {
+    let cancelled = false;
     const supabase = createClient();
 
     async function syncAuthState() {
@@ -26,8 +28,10 @@ export function NavbarAuthControls({ initialEmail, initialDisplayName }: Props) 
       } = await supabase.auth.getUser();
 
       if (!user?.email) {
-        setEmail(null);
-        setDisplayName(null);
+        if (!cancelled) {
+          setEmail(null);
+          setDisplayName(null);
+        }
         return;
       }
 
@@ -42,8 +46,10 @@ export function NavbarAuthControls({ initialEmail, initialDisplayName }: Props) 
         nextDisplayName = profile.username;
       }
 
-      setEmail(user.email);
-      setDisplayName(nextDisplayName);
+      if (!cancelled) {
+        setEmail(user.email);
+        setDisplayName(nextDisplayName);
+      }
     }
 
     void syncAuthState();
@@ -54,8 +60,16 @@ export function NavbarAuthControls({ initialEmail, initialDisplayName }: Props) 
       void syncAuthState();
     });
 
-    return () => subscription.unsubscribe();
-  }, [initialDisplayName, initialEmail, pathname]);
+    const unsubscribeNavbarSync = subscribeNavbarSync(() => {
+      void syncAuthState();
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribeNavbarSync();
+      subscription.unsubscribe();
+    };
+  }, [pathname]);
 
   if (email && displayName) {
     return <NavbarUserMenu displayName={displayName} />;

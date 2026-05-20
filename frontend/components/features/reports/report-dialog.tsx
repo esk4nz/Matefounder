@@ -2,6 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Check, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
@@ -77,6 +78,7 @@ export function ReportDialog({
   open: controlledOpen,
   onOpenChange,
 }: ReportDialogProps) {
+  const router = useRouter();
   const isControlled = controlledOpen !== undefined;
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isControlled ? Boolean(controlledOpen) : internalOpen;
@@ -113,7 +115,7 @@ export function ReportDialog({
     if (open) {
       form.reset(defaultValues);
     }
-  }, [open, defaultValues, form.reset]);
+  }, [open, defaultValues, form]);
 
   const onSubmit = form.handleSubmit((values) => {
     form.clearErrors("root");
@@ -125,6 +127,16 @@ export function ReportDialog({
         setToastVisible(true);
         return;
       }
+
+      if (res.reason === "blocked") {
+        form.reset(defaultValues);
+        form.clearErrors();
+        setOpen(false);
+        router.replace("/?error=blocked");
+        router.refresh();
+        return;
+      }
+
       form.setError("root", { message: res.error });
     });
   });

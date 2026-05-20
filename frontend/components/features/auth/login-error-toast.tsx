@@ -1,8 +1,8 @@
 "use client";
 
 import { AlertTriangle, X } from "lucide-react";
-import { useEffect, useState } from "react";
-import { useSyncExternalStore } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 type LoginError = {
@@ -23,48 +23,55 @@ const getClientSnapshot = () => true;
 const getServerSnapshot = () => false;
 
 export function LoginErrorToast({ error }: Props) {
+  const pathname = usePathname();
+  const router = useRouter();
   const isHydrated = useSyncExternalStore(
     subscribe,
     getClientSnapshot,
     getServerSnapshot,
   );
-  const urlError =
-    isHydrated && typeof window !== "undefined"
-      ? new URL(window.location.href).searchParams.get("error")
-      : undefined;
+  const [latchedUrlError] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const urlError = new URL(window.location.href).searchParams.get("error");
+    return urlError === BLOCKED_BY_ADMIN_CODE ? urlError : null;
+  });
   const actionMessage =
     error?.code === BLOCKED_BY_ADMIN_CODE
       ? error.message ?? BLOCKED_BY_ADMIN_FALLBACK_MESSAGE
       : undefined;
   const urlMessage =
-    urlError === BLOCKED_BY_ADMIN_CODE ? BLOCKED_BY_ADMIN_FALLBACK_MESSAGE : undefined;
+    latchedUrlError === BLOCKED_BY_ADMIN_CODE ? BLOCKED_BY_ADMIN_FALLBACK_MESSAGE : undefined;
   const message = actionMessage ?? urlMessage;
   const [dismissedError, setDismissedError] = useState<LoginError | null>(null);
   const [dismissedUrlError, setDismissedUrlError] = useState<string | null>(null);
   const visible = Boolean(
-    actionMessage ? dismissedError !== error : urlMessage && dismissedUrlError !== urlError,
+    actionMessage ? dismissedError !== error : urlMessage && dismissedUrlError !== latchedUrlError,
   );
+
+  useEffect(() => {
+    if (!latchedUrlError) {
+      return;
+    }
+
+    router.replace(pathname, { scroll: false });
+  }, [latchedUrlError, pathname, router]);
 
   useEffect(() => {
     if (
       !message ||
       (actionMessage && dismissedError === error) ||
-      (urlMessage && dismissedUrlError === urlError)
+      (urlMessage && dismissedUrlError === latchedUrlError)
     ) {
       return;
-    }
-
-    const url = new URL(window.location.href);
-    if (url.searchParams.get("error") === BLOCKED_BY_ADMIN_CODE) {
-      url.searchParams.delete("error");
-      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
     }
 
     const timer = window.setTimeout(() => {
       if (actionMessage) {
         setDismissedError(error ?? null);
-      } else if (urlError) {
-        setDismissedUrlError(urlError);
+      } else if (latchedUrlError) {
+        setDismissedUrlError(latchedUrlError);
       }
     }, 5000);
 
@@ -74,12 +81,12 @@ export function LoginErrorToast({ error }: Props) {
     dismissedError,
     dismissedUrlError,
     error,
+    latchedUrlError,
     message,
-    urlError,
     urlMessage,
   ]);
 
-  if (!isHydrated || !visible || !message) {
+  if (!isHydrated || typeof document === "undefined" || !visible || !message) {
     return null;
   }
 
@@ -98,8 +105,8 @@ export function LoginErrorToast({ error }: Props) {
         onClick={() => {
           if (actionMessage) {
             setDismissedError(error ?? null);
-          } else if (urlError) {
-            setDismissedUrlError(urlError);
+          } else if (latchedUrlError) {
+            setDismissedUrlError(latchedUrlError);
           }
         }}
         className="-mr-1 -mt-1 rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"

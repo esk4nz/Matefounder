@@ -1,13 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import type { PostgrestError } from "@supabase/supabase-js";
+import type { PostgrestError, User } from "@supabase/supabase-js";
 
 import { createReportPayloadSchema } from "@/app/schemas/reports";
 import { createServiceRoleClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
-export type CreateReportResult = { ok: true } | { ok: false; error: string };
+export type CreateReportResult =
+  | { ok: true }
+  | { ok: false; error: string; reason?: "blocked" };
 
 function mapSupabaseError(raw: string | undefined): string {
   const msg = (raw ?? "").toLowerCase();
@@ -42,6 +44,54 @@ function isRowLevelSecurityViolation(error: PostgrestError | null): boolean {
 const DUPLICATE_OPEN_REPORT_MESSAGE =
   "Ви вже надіслали скаргу на цей об'єкт. Вона очікує на розгляд.";
 
+function blockedReporterResponse(): CreateReportResult {
+  return {
+    ok: false,
+    error: "Ваш акаунт було заблоковано адміністратором.",
+    reason: "blocked",
+  };
+}
+
+type ReportActionAuthResult =
+  | { ok: true; user: User }
+  | { ok: false; response: CreateReportResult };
+
+async function requireActiveReporterUser(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<ReportActionAuthResult> {
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, response: { ok: false, error: "Увійдіть, щоб надіслати скаргу." } };
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("is_blocked")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError || !profile) {
+    return {
+      ok: false,
+      response: {
+        ok: false,
+        error: "Не вдалося перевірити статус акаунта. Спробуйте ще раз.",
+      },
+    };
+  }
+
+  if (profile.is_blocked === true) {
+    await supabase.auth.signOut();
+    return { ok: false, response: blockedReporterResponse() };
+  }
+
+  return { ok: true, user };
+}
+
 export async function createReportAction(payload: unknown): Promise<CreateReportResult> {
   const parsed = createReportPayloadSchema.safeParse(payload);
   if (!parsed.success) {
@@ -49,13 +99,11 @@ export async function createReportAction(payload: unknown): Promise<CreateReport
   }
 
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return { ok: false, error: "Увійдіть, щоб надіслати скаргу." };
+  const auth = await requireActiveReporterUser(supabase);
+  if (!auth.ok) {
+    return auth.response;
   }
+  const { user } = auth;
 
   if (parsed.data.targetUserId === user.id) {
     return { ok: false, error: "Не можна надіслати скаргу на власний профіль." };
