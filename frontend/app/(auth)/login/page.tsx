@@ -95,23 +95,14 @@ export default function LoginPage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="flex items-center">
-                <Label
-                  htmlFor="password"
-                  className={
-                    form.formState.errors.password ? "text-red-500" : "text-slate-700"
-                  }
-                >
-                  Пароль
-                </Label>
-                <Button
-                  asChild
-                  variant="link"
-                  className="ml-auto h-auto px-0 text-xs font-medium text-blue-600 hover:text-blue-700"
-                >
-                  <Link href="#">Забули пароль?</Link>
-                </Button>
-              </div>
+              <Label
+                htmlFor="password"
+                className={
+                  form.formState.errors.password ? "text-red-500" : "text-slate-700"
+                }
+              >
+                Пароль
+              </Label>
               <div className="relative">
                 <Input
                   {...form.register("password")}

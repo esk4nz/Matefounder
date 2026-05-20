@@ -20,7 +20,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
       <div className="flex flex-col items-center text-center mt-12 md:mt-24 gap-6">
         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-1.5 text-[10px] md:text-xs font-bold text-blue-600 border border-blue-100 uppercase tracking-widest">
-          <Sparkles className="h-3 w-3" /> AI-Powered Matchmaking
+          <Sparkles className="h-3 w-3" /> Розумний підбір
         </span>
 
         <h1 className="text-4xl font-black leading-[1.1] tracking-tighter md:text-5xl lg:text-7xl text-slate-900">
@@ -31,7 +31,7 @@ export default async function Home({ searchParams }: HomeProps) {
         <p className="max-w-[600px] text-base text-slate-500 sm:text-lg font-medium leading-relaxed">
           Найрозумніший спосіб знайти сусіда по дому.{" "}
           <br className="hidden md:block" />
-          Аналізуємо твій стиль життя, щоб знайти ідеальний метч.
+          Підбираємо сумісні оголошення за профілем, інтересами та описом.
         </p>
 
         <div className="flex flex-col sm:flex-row gap-4 mt-4">
@@ -53,7 +53,7 @@ export default async function Home({ searchParams }: HomeProps) {
             Точний аналіз
           </h3>
           <p className="text-sm text-slate-500 font-medium leading-relaxed">
-            Використовуємо NLP для аналізу ваших відповідей та стилю життя.
+            Оцінюємо сумісність за описом профілю, інтересами та параметрами оголошення.
           </p>
         </div>
         <div className="space-y-2">
@@ -61,7 +61,7 @@ export default async function Home({ searchParams }: HomeProps) {
             Безпека даних
           </h3>
           <p className="text-sm text-slate-500 font-medium leading-relaxed">
-            Ваші профілі захищені, а перше спілкування відбувається анонімно.
+            Обмін контактами лише після схвалення заявки на співпроживання.
           </p>
         </div>
         <div className="space-y-2">

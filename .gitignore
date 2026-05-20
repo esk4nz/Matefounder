@@ -42,8 +42,3 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 /coverage
-
-
-# Python
-backend/venv/
-backend/__pycache__/
