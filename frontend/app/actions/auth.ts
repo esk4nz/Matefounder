@@ -8,6 +8,7 @@ import { createClient } from "@/lib/supabase/server";
 export type AuthMessage = {
   ok: boolean;
   message?: string;
+  code?: "blocked_by_admin";
 };
 
 function mapSignupError(raw: string): string {
@@ -54,13 +55,45 @@ export async function loginAction(
   }
 
   const supabase = await createClient();
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password: parsed.data.password,
   });
 
   if (error) {
     return { ok: false, message: "Невірний логін або пароль." };
+  }
+
+  const userId = data.user?.id;
+  if (!userId) {
+    await supabase.auth.signOut();
+    return {
+      ok: false,
+      message: "Не вдалося завершити вхід. Спробуйте ще раз.",
+    };
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("is_blocked")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileError) {
+    await supabase.auth.signOut();
+    return {
+      ok: false,
+      message: "Не вдалося перевірити статус акаунта. Спробуйте ще раз.",
+    };
+  }
+
+  if (profile?.is_blocked === true) {
+    await supabase.auth.signOut();
+    return {
+      ok: false,
+      code: "blocked_by_admin",
+      message: "Ваш акаунт заблокований адміністрацією.",
+    };
   }
 
   redirect("/");

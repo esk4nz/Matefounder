@@ -20,7 +20,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { LoginErrorToast } from "@/components/features/auth/login-error-toast";
 import { OAuthSignInButton } from "@/components/layout/oauth-sign-in-button";
+
+const BLOCKED_BY_ADMIN_CODE = "blocked_by_admin";
 
 export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
@@ -43,11 +46,18 @@ export default function LoginPage() {
     });
   };
 
+  const blockedLoginError =
+    actionState?.ok === false && actionState.code === BLOCKED_BY_ADMIN_CODE
+      ? actionState
+      : null;
   const serverError =
-    actionState && actionState.ok === false ? actionState.message : null;
+    actionState && actionState.ok === false && !blockedLoginError
+      ? actionState.message
+      : null;
 
   return (
     <div className="flex flex-1 items-center justify-center p-4">
+      <LoginErrorToast error={blockedLoginError} />
       <Card className="w-full max-w-sm bg-white border-none shadow-[0_20px_60px_-15px_rgba(30,64,175,0.1)] ring-1 ring-blue-100">
         <CardHeader className="space-y-1 text-center">
           <CardTitle className="text-2xl font-bold tracking-tight text-slate-900 uppercase">
