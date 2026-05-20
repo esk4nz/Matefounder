@@ -16,7 +16,7 @@ export default async function Home({ searchParams }: HomeProps) {
 
   return (
     <section className={cn(PAGE_SHELL_CLASS, "flex flex-1 flex-col justify-between")}>
-      <HomeErrorToast key={error ?? "home"} error={error} />
+      <HomeErrorToast error={error} />
 
       <div className="flex flex-col items-center text-center mt-12 md:mt-24 gap-6">
         <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-1.5 text-[10px] md:text-xs font-bold text-blue-600 border border-blue-100 uppercase tracking-widest">

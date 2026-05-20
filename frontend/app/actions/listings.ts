@@ -7,7 +7,11 @@ import {
   PROFILE_EXCLUSIVE_CATEGORIES,
   type ProfileExclusiveTagCategory,
 } from "@/app/schemas/profile";
-import { createListingFormSchema, publicListingsFiltersSchema } from "../schemas/listings";
+import {
+  createListingFormSchema,
+  publicListingsFiltersSchema,
+  type PublicListingsFilters,
+} from "../schemas/listings";
 import type { ListingCardModel } from "@/lib/listings/listing-card-types";
 import type {
   GetIncomingRequestsActionResult,
@@ -1056,6 +1060,23 @@ async function fetchCreatorIdsMatchingAuthorInterests(
   return matched;
 }
 
+function hasAppliedPublicListingsFilters(filters: PublicListingsFilters): boolean {
+  return Boolean(
+    filters.type ||
+      (filters.types?.length ?? 0) > 0 ||
+      filters.cityId ||
+      (filters.cityIds?.length ?? 0) > 0 ||
+      typeof filters.priceMin === "number" ||
+      typeof filters.priceMax === "number" ||
+      filters.authorGender === "male" ||
+      filters.authorGender === "female" ||
+      PROFILE_EXCLUSIVE_CATEGORIES.some((cat) => (filters.requiredTags?.[cat]?.length ?? 0) > 0) ||
+      (filters.authorInterestTagIds?.length ?? 0) > 0 ||
+      Boolean(filters.moveInFrom) ||
+      Boolean(filters.moveInTo),
+  );
+}
+
 export async function getPublicListingsAction(
   rawFilters: unknown,
 ): Promise<PublicListingsActionResult> {
@@ -1139,9 +1160,11 @@ export async function getPublicListingsAction(
     }
   }
 
+  const hasAppliedFilters = hasAppliedPublicListingsFilters(filters);
+
   let query = supabase
     .from("listings")
-    .select(LISTING_DETAILS_SELECT, { count: "exact" })
+    .select(hasAppliedFilters ? "id, updated_at" : LISTING_DETAILS_SELECT, { count: "exact" })
     .eq("is_active", true);
 
   if (filters.type) {
@@ -1187,20 +1210,69 @@ export async function getPublicListingsAction(
   const from = (page - 1) * PUBLIC_LISTINGS_PAGE_SIZE;
   const to = from + PUBLIC_LISTINGS_PAGE_SIZE - 1;
 
-  const { data: listingRows, error: listingsError, count } = await query
-    .order("updated_at", { ascending: false })
-    .range(from, to);
+  const orderedQuery = query.order("updated_at", { ascending: false });
+  const { data: listingRows, error: listingsError, count } = hasAppliedFilters
+    ? await orderedQuery
+    : await orderedQuery.range(from, to);
 
   if (listingsError) {
     return { ok: false, reason: "invalidFilters", message: "Не вдалося завантажити оголошення. Спробуйте ще раз." };
   }
 
-  const rows = listingRows ?? [];
-  const listingIds = rows.map((r) => (r as ListingDetailsQueryRow).id);
-  const [seekerCtx, matchScoresByListingId] = await Promise.all([
-    loadSeekerBatchContext(supabase, user.id, listingIds),
-    fetchMatchScoresByListingId(supabase, user.id, listingIds),
-  ]);
+  let rows: ListingDetailsQueryRow[];
+  const rawRows = (listingRows ?? []) as unknown[];
+  const listingIds = rawRows.map((r) => (r as { id: string }).id);
+
+  let seekerCtx: SeekerBatchContext;
+  let matchScoresByListingId: Map<string, number>;
+
+  if (hasAppliedFilters) {
+    matchScoresByListingId = await fetchMatchScoresByListingId(supabase, user.id, listingIds);
+    const filteredRows = rawRows as { id: string; updated_at: string }[];
+    const pageListingIds = [...filteredRows]
+      .sort((aRaw, bRaw) => {
+        const scoreDelta =
+          (matchScoresByListingId.get(bRaw.id) ?? 0) - (matchScoresByListingId.get(aRaw.id) ?? 0);
+        if (scoreDelta !== 0) {
+          return scoreDelta;
+        }
+        return aRaw.updated_at < bRaw.updated_at ? 1 : -1;
+      })
+      .slice(from, to + 1)
+      .map((row) => row.id);
+
+    if (pageListingIds.length === 0) {
+      rows = [];
+    } else {
+      const { data: pageRows, error: pageRowsError } = await supabase
+        .from("listings")
+        .select(LISTING_DETAILS_SELECT)
+        .in("id", pageListingIds);
+      if (pageRowsError) {
+        return { ok: false, reason: "invalidFilters", message: "Не вдалося завантажити оголошення. Спробуйте ще раз." };
+      }
+      const fullRows = (pageRows ?? []) as unknown as ListingDetailsQueryRow[];
+      const byId = new Map(
+        fullRows.map((row) => [row.id, row]),
+      );
+      rows = pageListingIds
+        .map((id) => byId.get(id))
+        .filter((row): row is NonNullable<typeof row> => Boolean(row));
+    }
+
+    seekerCtx = await loadSeekerBatchContext(
+      supabase,
+      user.id,
+      pageListingIds,
+    );
+  } else {
+    [seekerCtx, matchScoresByListingId] = await Promise.all([
+      loadSeekerBatchContext(supabase, user.id, listingIds),
+      fetchMatchScoresByListingId(supabase, user.id, listingIds),
+    ]);
+    rows = rawRows as unknown as ListingDetailsQueryRow[];
+  }
+
   const seekerCtxWithScores: SeekerBatchContext = {
     ...seekerCtx,
     matchScoresByListingId,

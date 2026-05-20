@@ -67,7 +67,11 @@ export default async function Navbar() {
           </div>
         </div>
 
-        <NavbarAuthControls initialEmail={user?.email ?? null} initialDisplayName={navLabel || null} />
+        <NavbarAuthControls
+          key={user?.id ?? "guest"}
+          initialEmail={user?.email ?? null}
+          initialDisplayName={navLabel || null}
+        />
       </div>
     </nav>
   );

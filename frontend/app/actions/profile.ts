@@ -1,7 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, type User } from "@supabase/supabase-js";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
@@ -34,7 +34,7 @@ import { createClient } from "@/lib/supabase/server";
 export type ProfileMessage = {
   ok: boolean;
   message?: string;
-  reason?: "unauthenticated" | "stale_auth_session" | "missingProfile" | "adminAccount";
+  reason?: "unauthenticated" | "stale_auth_session" | "missingProfile" | "adminAccount" | "blocked";
   profile?: NormalizedProfileValues & {
     avatarUrl: string | null;
     selectedTagIds: number[];
@@ -51,6 +51,51 @@ function staleAuthSessionResponse(): ProfileMessage {
     message: STALE_AUTH_SESSION_MESSAGE,
     reason: "stale_auth_session",
   };
+}
+
+function blockedAccountResponse(): ProfileMessage {
+  return {
+    ok: false,
+    message: "Ваш акаунт було заблоковано адміністратором.",
+    reason: "blocked",
+  };
+}
+
+type ProfileActionAuthResult =
+  | { ok: true; user: User }
+  | { ok: false; response: ProfileMessage };
+
+async function requireActiveProfileUser(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+): Promise<ProfileActionAuthResult> {
+  const {
+    data: { user },
+    error: authError,
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    return { ok: false, response: staleAuthSessionResponse() };
+  }
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("is_blocked")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError || !profile) {
+    return {
+      ok: false,
+      response: { ok: false, message: "Не вдалося завантажити профіль.", reason: "missingProfile" },
+    };
+  }
+
+  if (profile.is_blocked === true) {
+    await supabase.auth.signOut();
+    return { ok: false, response: blockedAccountResponse() };
+  }
+
+  return { ok: true, user };
 }
 
 const PROFILE_STALE_VERSION_MESSAGE =
@@ -92,14 +137,12 @@ export async function updateProfileAction(
   formData: FormData,
 ): Promise<ProfileMessage> {
   const supabase = await createClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const auth = await requireActiveProfileUser(supabase);
 
-  if (authError || !user) {
-    return staleAuthSessionResponse();
+  if (!auth.ok) {
+    return auth.response;
   }
+  const { user } = auth;
 
   const expectedUpdatedAt = String(formData.get("expectedUpdatedAt") ?? "").trim();
   if (!expectedUpdatedAt) {
@@ -355,14 +398,12 @@ export async function updatePasswordAction(
   formData: FormData,
 ): Promise<ProfileMessage> {
   const supabase = await createClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const auth = await requireActiveProfileUser(supabase);
 
-  if (authError || !user) {
-    return staleAuthSessionResponse();
+  if (!auth.ok) {
+    return auth.response;
   }
+  const { user } = auth;
 
   const { data: currentProfile, error: profileError } = await supabase
     .from("profiles")
@@ -448,14 +489,12 @@ export async function deleteAccountAction(
   formData: FormData,
 ): Promise<ProfileMessage> {
   const supabase = await createClient();
-  const {
-    data: { user },
-    error: authError,
-  } = await supabase.auth.getUser();
+  const auth = await requireActiveProfileUser(supabase);
 
-  if (authError || !user) {
-    return staleAuthSessionResponse();
+  if (!auth.ok) {
+    return auth.response;
   }
+  const { user } = auth;
 
   const admin = createServiceRoleClient();
   const { data: currentProfile, error: profileError } = await admin

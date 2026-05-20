@@ -1,8 +1,11 @@
 "use client";
 
 import { AlertTriangle, X } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { dispatchNavbarSync } from "@/lib/navbar-sync";
+import { createClient } from "@/lib/supabase/client";
 
 const ERROR_MESSAGES: Record<string, string> = {
   profile_not_found:
@@ -11,6 +14,7 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Доступ до консолі адміністрування для цього сеансу скасовано (права адміністратора змінено).",
   stale_auth_session:
     "Ваша сесія застаріла. Будь ласка, спробуйте увійти знову.",
+  blocked: "Ваш акаунт було заблоковано адміністратором.",
 };
 
 function getErrorToastDurationMs(error: string): number {
@@ -22,9 +26,14 @@ type Props = {
 };
 
 export function HomeErrorToast({ error }: Props) {
-  const message = error ? ERROR_MESSAGES[error] : undefined;
-  const [visible, setVisible] = useState(() => Boolean(message));
+  const pathname = usePathname();
+  const router = useRouter();
   const [mounted, setMounted] = useState(false);
+  const [activeError, setActiveError] = useState<string | null>(
+    error && ERROR_MESSAGES[error] ? error : null,
+  );
+  const message = activeError ? ERROR_MESSAGES[activeError] : undefined;
+  const [visible, setVisible] = useState(() => Boolean(activeError));
 
   useEffect(() => {
     setMounted(true);
@@ -35,17 +44,38 @@ export function HomeErrorToast({ error }: Props) {
       return;
     }
 
-    const url = new URL(window.location.href);
-    url.searchParams.delete("error");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    setActiveError(error);
+    setVisible(true);
+  }, [error]);
 
-    const durationMs = getErrorToastDurationMs(error);
+  useEffect(() => {
+    if (!activeError || !ERROR_MESSAGES[activeError]) {
+      return;
+    }
+
+    router.replace(pathname, { scroll: false });
+
+    if (activeError === "blocked") {
+      const supabase = createClient();
+      void (async () => {
+        try {
+          await supabase.auth.signOut();
+        } finally {
+          dispatchNavbarSync();
+        }
+      })();
+    }
+
+    const durationMs = getErrorToastDurationMs(activeError);
     const timer = window.setTimeout(() => {
       setVisible(false);
+      setActiveError(null);
     }, durationMs);
 
-    return () => window.clearTimeout(timer);
-  }, [error]);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [activeError, pathname, router]);
 
   if (!mounted || typeof document === "undefined" || !visible || !message) {
     return null;
@@ -63,7 +93,10 @@ export function HomeErrorToast({ error }: Props) {
       <button
         type="button"
         aria-label="Закрити повідомлення"
-        onClick={() => setVisible(false)}
+        onClick={() => {
+          setVisible(false);
+          setActiveError(null);
+        }}
         className="-mr-1 -mt-1 rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
       >
         <X className="h-4 w-4" />

@@ -43,6 +43,7 @@ import { dispatchNavbarSync } from "@/lib/navbar-sync";
 const PROFILE_SUCCESS_MESSAGE_KEY = "matefounder.profile.successMessage";
 
 const STALE_SESSION_HOME_ERROR = "stale_auth_session";
+const BLOCKED_HOME_ERROR = "blocked";
 
 export function ProfileSettings({
   initialEmail,
@@ -76,7 +77,12 @@ export function ProfileSettings({
   const [removeAvatar, setRemoveAvatar] = useState(false);
   const [avatarInputVersion, setAvatarInputVersion] = useState(0);
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState<string | null>(initialProfile.avatarUrl);
-  const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(null);
+  const [profileSuccessMessage, setProfileSuccessMessage] = useState<string | null>(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return window.sessionStorage.getItem(PROFILE_SUCCESS_MESSAGE_KEY);
+  });
 
   const navigateHomeWithStaleSessionNotice = useCallback(() => {
     dispatchNavbarSync();
@@ -84,13 +90,17 @@ export function ProfileSettings({
     router.refresh();
   }, [router]);
 
+  const navigateHomeWithBlockedNotice = useCallback(() => {
+    dispatchNavbarSync();
+    router.replace(`/?error=${BLOCKED_HOME_ERROR}`);
+    router.refresh();
+  }, [router]);
+
   useEffect(() => {
-    const message = window.sessionStorage.getItem(PROFILE_SUCCESS_MESSAGE_KEY);
-    if (message) {
+    if (profileSuccessMessage) {
       window.sessionStorage.removeItem(PROFILE_SUCCESS_MESSAGE_KEY);
-      setProfileSuccessMessage(message);
     }
-  }, []);
+  }, [profileSuccessMessage]);
 
   useEffect(() => {
     profileUpdatedAtRef.current = initialProfile.updatedAt;
@@ -151,7 +161,9 @@ export function ProfileSettings({
   ) => {
     const nextState = await updateProfileAction(previousState, formData);
 
-    if (!nextState.ok && nextState.reason === "stale_auth_session") {
+    if (!nextState.ok && nextState.reason === "blocked") {
+      navigateHomeWithBlockedNotice();
+    } else if (!nextState.ok && nextState.reason === "stale_auth_session") {
       navigateHomeWithStaleSessionNotice();
     }
 
@@ -199,7 +211,9 @@ export function ProfileSettings({
     formData: FormData,
   ): Promise<ProfileMessage> => {
     const nextState = await updatePasswordAction(previousState, formData);
-    if (!nextState.ok && nextState.reason === "stale_auth_session") {
+    if (!nextState.ok && nextState.reason === "blocked") {
+      navigateHomeWithBlockedNotice();
+    } else if (!nextState.ok && nextState.reason === "stale_auth_session") {
       navigateHomeWithStaleSessionNotice();
     }
     return nextState;
@@ -210,7 +224,9 @@ export function ProfileSettings({
     formData: FormData,
   ): Promise<ProfileMessage> => {
     const nextState = await deleteAccountAction(previousState, formData);
-    if (!nextState.ok && nextState.reason === "stale_auth_session") {
+    if (!nextState.ok && nextState.reason === "blocked") {
+      navigateHomeWithBlockedNotice();
+    } else if (!nextState.ok && nextState.reason === "stale_auth_session") {
       navigateHomeWithStaleSessionNotice();
     }
     return nextState;
@@ -245,6 +261,15 @@ export function ProfileSettings({
       profileState?.reason === "stale_auth_session" ||
       passwordState?.reason === "stale_auth_session" ||
       deleteState?.reason === "stale_auth_session";
+    const hasBlockedState =
+      profileState?.reason === "blocked" ||
+      passwordState?.reason === "blocked" ||
+      deleteState?.reason === "blocked";
+
+    if (hasBlockedState) {
+      navigateHomeWithBlockedNotice();
+      return;
+    }
 
     if (hasStaleAuthSession) {
       return;
@@ -266,10 +291,16 @@ export function ProfileSettings({
           : undefined,
       );
     }
-  }, [deleteState, passwordState, profileState, redirectToHome]);
+  }, [
+    deleteState,
+    navigateHomeWithBlockedNotice,
+    passwordState,
+    profileState,
+    redirectToHome,
+  ]);
 
   useEffect(() => {
-    if (passwordState?.reason === "stale_auth_session") {
+    if (passwordState?.reason === "stale_auth_session" || passwordState?.reason === "blocked") {
       return;
     }
 

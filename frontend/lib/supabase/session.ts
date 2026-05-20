@@ -4,7 +4,7 @@ import { getSupabaseAnonKey, getSupabaseUrl } from "./config";
 
 const GUEST_ONLY_ROUTES = ["/login", "/signup"] as const;
 const PROTECTED_ROUTE_PREFIXES = ["/profile"] as const;
-const ACCOUNT_BLOCKED_LOGIN_PATH = "/login?error=account_blocked";
+const ACCOUNT_BLOCKED_HOME_PATH = "/?error=blocked";
 
 function redirectPreservingSession(
   request: NextRequest,
@@ -42,6 +42,9 @@ function getSafeNextPath(request: NextRequest) {
 }
 
 export async function updateSession(request: NextRequest) {
+  const isDocumentRequest =
+    request.method === "GET" || request.method === "HEAD";
+
   let response = NextResponse.next({
     request: { headers: request.headers },
   });
@@ -80,13 +83,15 @@ export async function updateSession(request: NextRequest) {
     profile = data;
 
     if (profile?.is_blocked === true) {
-      await supabase.auth.signOut();
-      return redirectPreservingSession(request, response, ACCOUNT_BLOCKED_LOGIN_PATH);
+      if (isDocumentRequest) {
+        await supabase.auth.signOut();
+        return redirectPreservingSession(request, response, ACCOUNT_BLOCKED_HOME_PATH);
+      }
+      return response;
     }
   }
 
-  const adminGateOnlyForDocument =
-    request.method === "GET" || request.method === "HEAD";
+  const adminGateOnlyForDocument = isDocumentRequest;
 
   if (isAdminRoute(pathname)) {
     if (!user) {
