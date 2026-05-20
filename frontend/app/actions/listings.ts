@@ -762,7 +762,7 @@ export async function updateMyListingAction(
 
   const { data: listingRow, error: listingError } = await supabase
     .from("listings")
-    .select("id, updated_at")
+    .select("id, updated_at, gender_preference")
     .eq("id", listingId)
     .eq("creator_id", user.id)
     .maybeSingle();
@@ -775,6 +775,9 @@ export async function updateMyListingAction(
       reason: LISTING_FLASH_CODE.listingNotFound,
     };
   }
+
+  const genderPreferenceChanged =
+    (listingRow.gender_preference ?? "") !== parsedListing.data.genderPreference;
 
   const { data: existingRequiredTags, error: existingRequiredTagsError } = await supabase
     .from("listing_required_tags")
@@ -912,11 +915,11 @@ export async function updateMyListingAction(
     await supabase.storage.from("listing-images").remove(removedPaths);
   }
 
-  if (listingMatchTagsChanged) {
+  if (listingMatchTagsChanged || genderPreferenceChanged) {
     try {
       await refreshSimilarityScoresForListingRequests(listingId);
     } catch (e) {
-      console.error("[listing_request_similarity] after_listing_tags", e);
+      console.error("[listing_request_similarity] after_listing_match_criteria", e);
     }
   }
 

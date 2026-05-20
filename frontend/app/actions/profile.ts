@@ -20,7 +20,10 @@ import {
   EmptyProfileEmbeddingSourceError,
   generateProfileEmbedding,
 } from "@/lib/openai/embeddings";
-import { refreshSimilarityScoresAfterProfileEmbeddingChange } from "@/lib/listings/sync-listing-request-similarity";
+import {
+  refreshSimilarityScoresAfterProfileEmbeddingChange,
+  refreshSimilarityScoresForSeekerRequests,
+} from "@/lib/listings/sync-listing-request-similarity";
 import { isUsernameTaken } from "@/lib/auth/queries";
 import { userHasPassword } from "@/lib/auth/user";
 import { mapTagsQueryToProfileRows, TAGS_WITH_CATEGORY_SELECT } from "@/lib/profile/map-tags";
@@ -106,7 +109,7 @@ export async function updateProfileAction(
   const [profileResult, profileTagsResult] = await Promise.all([
     supabase
       .from("profiles")
-      .select("username, avatar_path, updated_at, bio")
+      .select("username, avatar_path, updated_at, bio, gender")
       .eq("id", user.id)
       .maybeSingle(),
     supabase.from("profile_tags").select("tag_id").eq("profile_id", user.id),
@@ -304,11 +307,19 @@ export async function updateProfileAction(
     }
   }
 
+  const genderChanged = (currentProfile.gender ?? "") !== parsed.data.gender;
+
   if (needsEmbeddingRefresh) {
     try {
       await refreshSimilarityScoresAfterProfileEmbeddingChange(user.id);
     } catch (e) {
       console.error("[listing_request_similarity] after_profile_embedding", e);
+    }
+  } else if (genderChanged) {
+    try {
+      await refreshSimilarityScoresForSeekerRequests(user.id);
+    } catch (e) {
+      console.error("[listing_request_similarity] after_seeker_gender", e);
     }
   }
 

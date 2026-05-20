@@ -105,6 +105,38 @@ export async function refreshSimilarityScoresAfterProfileEmbeddingChange(
   }
 }
 
+export async function refreshSimilarityScoresForSeekerRequests(
+  seekerUserId: string,
+): Promise<void> {
+  let admin: ReturnType<typeof createServiceRoleClient>;
+  try {
+    admin = createServiceRoleClient();
+  } catch (e) {
+    logSimilaritySyncError("service_role_unavailable", e);
+    return;
+  }
+
+  try {
+    const { data, error } = await admin
+      .from("listing_requests")
+      .select("id, listing_id, initiator_id")
+      .eq("initiator_id", seekerUserId);
+    if (error) {
+      logSimilaritySyncError(`fetch initiator_id=${seekerUserId}`, error);
+      return;
+    }
+    const rows = (data ?? []).filter(
+      (row): row is { id: string; listing_id: string; initiator_id: string } =>
+        typeof row.id === "string" &&
+        typeof row.listing_id === "string" &&
+        typeof row.initiator_id === "string",
+    );
+    await applyRecalculatedScores(admin, rows);
+  } catch (e) {
+    logSimilaritySyncError(`refreshSimilarityScoresForSeekerRequests initiator_id=${seekerUserId}`, e);
+  }
+}
+
 export async function refreshSimilarityScoresForListingRequests(listingId: string): Promise<void> {
   let admin: ReturnType<typeof createServiceRoleClient>;
   try {
