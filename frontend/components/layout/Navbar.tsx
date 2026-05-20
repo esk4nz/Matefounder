@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { NavbarAdminLinks } from "@/components/layout/navbar-admin-links";
 import { NavbarAuthControls } from "@/components/layout/navbar-auth-controls";
+import { NavbarUserLinks } from "@/components/layout/navbar-user-links";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function Navbar() {
@@ -41,28 +42,7 @@ export default async function Navbar() {
             >
               Оголошення
             </Link>
-            {user?.id ? (
-              <>
-                <Link
-                  href="/my-listings"
-                  className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  Мої оголошення
-                </Link>
-                <Link
-                  href="/my-requests"
-                  className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  Мої заявки
-                </Link>
-                <Link
-                  href={`/profile/${user.id}/reviews`}
-                  className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
-                >
-                  Відгуки
-                </Link>
-              </>
-            ) : null}
+            <NavbarUserLinks key={user?.id ?? "guest"} initialUserId={user?.id} />
             <NavbarAdminLinks initialIsAdmin={isAdmin} hasUser={Boolean(user?.id)} />
           </div>
         </div>
