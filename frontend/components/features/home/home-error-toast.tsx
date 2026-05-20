@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -11,6 +11,7 @@ const ERROR_MESSAGES: Record<string, string> = {
     "Доступ до консолі адміністрування для цього сеансу скасовано (права адміністратора змінено).",
   stale_auth_session:
     "Ваша сесія застаріла. Будь ласка, спробуйте увійти знову.",
+  blocked: "Ваш акаунт було заблоковано адміністратором.",
 };
 
 function getErrorToastDurationMs(error: string): number {
@@ -21,14 +22,26 @@ type Props = {
   error?: string;
 };
 
+function subscribeToClientMount() {
+  return () => {};
+}
+
+function getClientSnapshot() {
+  return true;
+}
+
+function getServerSnapshot() {
+  return false;
+}
+
 export function HomeErrorToast({ error }: Props) {
   const message = error ? ERROR_MESSAGES[error] : undefined;
   const [visible, setVisible] = useState(() => Boolean(message));
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const mounted = useSyncExternalStore(
+    subscribeToClientMount,
+    getClientSnapshot,
+    getServerSnapshot,
+  );
 
   useEffect(() => {
     if (!error || !ERROR_MESSAGES[error]) {
