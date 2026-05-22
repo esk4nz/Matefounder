@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import {
   type NormalizedProfileValues,
+  PROFILE_EXCLUSIVE_CATEGORIES,
   PROFILE_INTERESTS_CATEGORY,
   PROFILE_TAG_CATALOG_CHANGED_MESSAGE,
   buildInitialTagFormState,
@@ -253,15 +254,21 @@ export async function updateProfileAction(
     nextAvatarPath = nextPath;
   }
 
+  const currentTagIds = (currentProfileTagRows ?? [])
+    .map((row) => row.tag_id)
+    .filter((id): id is number => Number.isInteger(id));
+  const currentExpanded = buildInitialTagFormState(allTagRows, currentTagIds);
   const interestIdSet = new Set(
     allTagRows.filter((t) => t.category === PROFILE_INTERESTS_CATEGORY).map((t) => t.id),
   );
-  const sortedCurrentInterestIds = (currentProfileTagRows ?? [])
-    .map((row) => row.tag_id)
+  const sortedCurrentInterestIds = currentTagIds
     .filter((id) => interestIdSet.has(id))
     .sort((a, b) => a - b);
   const sortedNextInterestIds = [...parsed.data.tagInterests].sort((a, b) => a - b);
   const bioChanged = (currentProfile.bio ?? "").trim() !== parsed.data.bio;
+  const profileMatchTagsChanged = PROFILE_EXCLUSIVE_CATEGORIES.some(
+    (category) => currentExpanded.tagSelections[category] !== parsed.data.tagSelections[category],
+  );
   const interestsChanged =
     sortedCurrentInterestIds.length !== sortedNextInterestIds.length ||
     sortedNextInterestIds.some((id, i) => sortedCurrentInterestIds[i] !== id);
@@ -358,11 +365,11 @@ export async function updateProfileAction(
     } catch (e) {
       console.error("[listing_request_similarity] after_profile_embedding", e);
     }
-  } else if (genderChanged) {
+  } else if (genderChanged || profileMatchTagsChanged) {
     try {
       await refreshSimilarityScoresForSeekerRequests(user.id);
     } catch (e) {
-      console.error("[listing_request_similarity] after_seeker_gender", e);
+      console.error("[listing_request_similarity] after_seeker_match_criteria", e);
     }
   }
 
