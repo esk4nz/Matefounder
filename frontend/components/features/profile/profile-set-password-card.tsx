@@ -3,7 +3,7 @@ import type { UseFormReturn } from "react-hook-form";
 import { Controller, useFormState } from "react-hook-form";
 import { Eye, EyeOff } from "lucide-react";
 import type { ProfileMessage } from "@/app/actions/profile";
-import type { ProfileSetPasswordValues } from "@/app/schemas/profile";
+import { NEW_PASSWORD_REQUIREMENTS_HINT, type ProfileSetPasswordValues } from "@/app/schemas/profile";
 import { ActionMessage, FieldError } from "@/components/features/profile/profile-form-feedback";
 import { Button } from "@/components/ui/button";
 import {
@@ -60,7 +60,7 @@ export function ProfileSetPasswordCard({
         <CardTitle className="text-xl font-bold text-slate-900">Пароль</CardTitle>
         <CardDescription>
           Встановіть пароль для акаунта з входом через прив’язаний обліковий запис, щоб надалі
-          входити також через email/login і пароль.
+          входити також через email/login і пароль. {NEW_PASSWORD_REQUIREMENTS_HINT}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
@@ -107,6 +107,7 @@ export function ProfileSetPasswordCard({
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            <p className="text-xs text-slate-500">{NEW_PASSWORD_REQUIREMENTS_HINT}</p>
             <FieldError message={errors.newPassword?.message} />
           </div>
 

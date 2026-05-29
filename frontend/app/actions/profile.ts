@@ -9,6 +9,7 @@ import {
   PROFILE_EXCLUSIVE_CATEGORIES,
   PROFILE_INTERESTS_CATEGORY,
   PROFILE_TAG_CATALOG_CHANGED_MESSAGE,
+  NEW_PASSWORD_REQUIREMENTS_HINT,
   buildInitialTagFormState,
   createProfileFormSchema,
   flattenProfileTagIds,
@@ -105,7 +106,7 @@ const PROFILE_STALE_VERSION_MESSAGE =
 function mapUpdatePasswordError(raw: string) {
   const lower = raw.toLowerCase();
   if (lower.includes("password")) {
-    return "Не вдалося оновити пароль.";
+    return `Не вдалося оновити пароль. ${NEW_PASSWORD_REQUIREMENTS_HINT}`;
   }
   return "Не вдалося зберегти зміни.";
 }

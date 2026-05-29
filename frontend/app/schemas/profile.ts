@@ -3,14 +3,49 @@ import type { ProfileTagRow, ProfileTagSelectionsExclusive } from "@/components/
 
 export const PROFILE_TAG_CATALOG_CHANGED_MESSAGE =
   "Список доступних інтересів змінився. Будь ласка, оновіть сторінку, щоб побачити актуальний перелік.";
+export const NEW_PASSWORD_REQUIREMENTS_HINT =
+  "Мінімум 8 символів, велика і мала латинська літера та спецсимвол: ! @ # $ % & * ? - _ .";
 
 export const PROFILE_EXCLUSIVE_CATEGORIES = ["habits", "routine", "social", "pets"] as const;
 export type ProfileExclusiveTagCategory = (typeof PROFILE_EXCLUSIVE_CATEGORIES)[number];
 export const PROFILE_INTERESTS_CATEGORY = "interests" as const;
 
-const profileGenderValues = ["male", "female"] as const;
+type ProfileGenderValue = "male" | "female";
 const profileGenderInputValues = ["", "male", "female"] as const;
 const ukrainianPhoneRegex = /^\+380\d{9}$/;
+const personNamePartRegex = /^\p{L}+(?:['’\-]\p{L}+)*$/u;
+const passwordAllowedCharactersRegex = /^[A-Za-z0-9!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]+$/;
+const passwordSpecialCharacterRegex = /[!@#$%^&*()_+\-=[\]{};':"\\|,.<>/?`~]/;
+const PERSON_NAME_ALLOWED_CHARACTERS_MESSAGE =
+  "Може містити лише літери, апострофи та дефіси між частинами";
+const PASSWORD_MIN_LENGTH_MESSAGE = "Пароль має бути не менше 8 символів";
+const PASSWORD_ALLOWED_CHARACTERS_MESSAGE =
+  "Пароль може містити лише латинські літери, цифри та спецсимволи";
+const PASSWORD_LOWERCASE_MESSAGE = "Пароль має містити хоча б одну малу латинську літеру";
+const PASSWORD_UPPERCASE_MESSAGE = "Пароль має містити хоча б одну велику латинську літеру";
+const PASSWORD_SPECIAL_CHARACTER_MESSAGE =
+  "Пароль має містити хоча б один спецсимвол: ! @ # $ % & * ? - _ .";
+
+function createPersonNameSchema(fieldLabel: string) {
+  return z
+    .string()
+    .trim()
+    .min(1, `${fieldLabel} надто коротке`)
+    .regex(personNamePartRegex, {
+      message: PERSON_NAME_ALLOWED_CHARACTERS_MESSAGE,
+    });
+}
+
+const currentPasswordSchema = z.string().min(1, "Введіть поточний пароль");
+const deletePasswordSchema = z.string().min(1, "Введіть пароль для підтвердження");
+const newPasswordSchema = z
+  .string()
+  .min(1, "Введіть новий пароль")
+  .min(8, PASSWORD_MIN_LENGTH_MESSAGE)
+  .regex(passwordAllowedCharactersRegex, PASSWORD_ALLOWED_CHARACTERS_MESSAGE)
+  .regex(/[a-z]/, PASSWORD_LOWERCASE_MESSAGE)
+  .regex(/[A-Z]/, PASSWORD_UPPERCASE_MESSAGE)
+  .regex(passwordSpecialCharacterRegex, PASSWORD_SPECIAL_CHARACTER_MESSAGE);
 
 const emptyExclusiveSelections = (): ProfileTagSelectionsExclusive => ({
   habits: null,
@@ -97,18 +132,8 @@ export function createProfileFormSchema(allTags: readonly ProfileTagRow[]) {
 
   return z
     .object({
-      firstName: z
-        .string()
-        .min(1, "Ім'я надто коротке")
-        .regex(/^[a-zA-Zа-яА-ЯіІїЇєЄґҐ]+$/, {
-          message: "Ім'я може містити лише букви",
-        }),
-      lastName: z
-        .string()
-        .min(1, "Прізвище надто коротке")
-        .regex(/^[a-zA-Zа-яА-ЯіІїЇєЄґҐ]+$/, {
-          message: "Прізвище може містити лише букви",
-        }),
+      firstName: createPersonNameSchema("Ім'я"),
+      lastName: createPersonNameSchema("Прізвище"),
       username: z
         .string()
         .min(3, "Мінімум 3 символи")
@@ -118,10 +143,10 @@ export function createProfileFormSchema(allTags: readonly ProfileTagRow[]) {
         }),
       gender: z
         .enum(profileGenderInputValues)
-        .refine((v) => v === "male" || v === "female", {
+        .refine((v): v is ProfileGenderValue => v === "male" || v === "female", {
           message: "Оберіть стать",
         })
-        .transform((v): (typeof profileGenderValues)[number] => v as "male" | "female"),
+        .transform((v): ProfileGenderValue => v),
       bio: z
         .string()
         .max(1000, "Максимум 1000 символів")
@@ -218,8 +243,8 @@ export type NormalizedProfileValues = z.output<ProfileFormSchema>;
 
 export const profilePasswordSchema = z
   .object({
-    currentPassword: z.string().min(1, "Введіть поточний пароль"),
-    newPassword: z.string().min(8, "Пароль має бути не менше 8 символів"),
+    currentPassword: currentPasswordSchema,
+    newPassword: newPasswordSchema,
     confirmPassword: z.string().min(1, "Підтвердіть новий пароль"),
   })
   .refine((data) => data.currentPassword !== data.newPassword, {
@@ -233,7 +258,7 @@ export const profilePasswordSchema = z
 
 export const profileSetPasswordSchema = z
   .object({
-    newPassword: z.string().min(8, "Пароль має бути не менше 8 символів"),
+    newPassword: newPasswordSchema,
     confirmPassword: z.string().min(1, "Підтвердіть новий пароль"),
   })
   .refine((data) => data.newPassword === data.confirmPassword, {
@@ -242,7 +267,7 @@ export const profileSetPasswordSchema = z
   });
 
 export const profileDeleteSchema = z.object({
-  password: z.string().min(1, "Введіть пароль для підтвердження"),
+  password: deletePasswordSchema,
 });
 
 export type ProfilePasswordValues = z.infer<typeof profilePasswordSchema>;

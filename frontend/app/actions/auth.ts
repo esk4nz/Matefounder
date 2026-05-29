@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import { loginSchema, registerSchema } from "@/app/schemas/auth";
+import { loginSchema, NEW_PASSWORD_REQUIREMENTS_HINT, registerSchema } from "@/app/schemas/auth";
 import { isUsernameTaken, resolveLoginEmail } from "@/lib/auth/queries";
 import { createClient } from "@/lib/supabase/server";
 
@@ -21,7 +21,7 @@ function mapSignupError(raw: string): string {
     return "Цей email уже зареєстрований.";
   }
   if (lower.includes("password")) {
-    return "Пароль не відповідає вимогам безпеки.";
+    return `Пароль не відповідає вимогам безпеки. ${NEW_PASSWORD_REQUIREMENTS_HINT}`;
   }
   return "Не вдалося створити акаунт. Спробуйте ще раз.";
 }

@@ -6,7 +6,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Eye, EyeOff } from "lucide-react";
-import { registerSchema, type RegisterValues } from "@/app/schemas/auth";
+import { NEW_PASSWORD_REQUIREMENTS_HINT, registerSchema, type RegisterValues } from "@/app/schemas/auth";
 import { signupAction } from "@/app/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -207,6 +207,7 @@ export default function RegisterPage() {
                   {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
+              <p className="text-[11px] text-slate-500">{NEW_PASSWORD_REQUIREMENTS_HINT}</p>
               {form.formState.errors.password ? (
                 <span className="text-[10px] font-bold text-red-500 uppercase">
                   {form.formState.errors.password.message}
