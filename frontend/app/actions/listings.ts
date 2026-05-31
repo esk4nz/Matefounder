@@ -28,6 +28,10 @@ import type {
   ListingDetailsPayload,
   ListingRequestStatus,
 } from "@/lib/listings/listing-details-types";
+import {
+  isOwnerIncomingRequestVisible,
+  loadVisibleIncomingRequestCountsByListingId,
+} from "@/lib/listings/owner-incoming-request-visibility";
 import { createClient } from "@/lib/supabase/server";
 
 export type { UpdateMyListingActionState } from "@/lib/listings/listing-error-codes";
@@ -987,6 +991,8 @@ export async function getMyListingFreshDataAction(
   const details = buildListingDetailsPayload(row, {
     supabase,
   });
+  const countsByListingId = await loadVisibleIncomingRequestCountsByListingId(supabase, user.id, [row.id]);
+  const fallbackIncomingRequestsCount = extractListingIncomingRequestsCount(row);
 
   return {
     ok: true,
@@ -1003,7 +1009,7 @@ export async function getMyListingFreshDataAction(
       requestStatus: null,
       isBlockedByMe: false,
       isBlockedByAuthor: false,
-      incomingRequestsCount: extractListingIncomingRequestsCount(row),
+      incomingRequestsCount: countsByListingId?.get(row.id) ?? fallbackIncomingRequestsCount,
       details,
     },
   };
@@ -1532,7 +1538,7 @@ export async function getIncomingRequestsAction(listingId: string): Promise<GetI
 
     const seekerBlockedMe = seekerIdsWhoBlockedMe.has(seekerId);
     const iBlockedSeeker = iBlockedSeekerIds.has(seekerId);
-    if (seekerBlockedMe && !iBlockedSeeker && st !== "accepted") {
+    if (!isOwnerIncomingRequestVisible({ status: st, seekerBlockedMe, iBlockedSeeker })) {
       continue;
     }
 

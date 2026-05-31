@@ -4,6 +4,7 @@ import type { MyListingCardModel } from "@/components/features/listings/my-listi
 import { MyListingsView } from "@/components/features/listings/my-listings-view";
 import { buildListingDetailsPayload } from "@/lib/listings/build-listing-details-payload";
 import { extractListingIncomingRequestsCount } from "@/lib/listings/listing-requests-count";
+import { loadVisibleIncomingRequestCountsByListingId } from "@/lib/listings/owner-incoming-request-visibility";
 import { PAGE_SHELL_CLASS } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/server";
 
@@ -51,11 +52,20 @@ export default async function MyListingsPage() {
     .eq("creator_id", user.id)
     .order("updated_at", { ascending: false });
 
+  const countsByListingId = await loadVisibleIncomingRequestCountsByListingId(
+    supabase,
+    user.id,
+    (listingsRows ?? [])
+      .map((row) => row.id)
+      .filter((id): id is string => typeof id === "string" && id.length > 0),
+  );
+
   const listings: MyListingCardModel[] = (listingsRows ?? []).map((row) => {
     const details = buildListingDetailsPayload(row, {
       supabase,
     });
     const firstImageUrl = details.imageUrls[0] ?? null;
+    const fallbackIncomingRequestsCount = extractListingIncomingRequestsCount(row);
     return {
       id: row.id,
       title: row.title,
@@ -68,7 +78,7 @@ export default async function MyListingsPage() {
       requestStatus: null,
       isBlockedByMe: false,
       isBlockedByAuthor: false,
-      incomingRequestsCount: extractListingIncomingRequestsCount(row),
+      incomingRequestsCount: countsByListingId?.get(row.id) ?? fallbackIncomingRequestsCount,
       details,
     };
   });
