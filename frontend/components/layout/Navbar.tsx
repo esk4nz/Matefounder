@@ -1,7 +1,6 @@
 import Link from "next/link";
-import { NavbarAdminLinks } from "@/components/layout/navbar-admin-links";
 import { NavbarAuthControls } from "@/components/layout/navbar-auth-controls";
-import { NavbarUserLinks } from "@/components/layout/navbar-user-links";
+import { NavbarPrimaryLinks } from "@/components/layout/navbar-primary-links";
 import { createClient } from "@/lib/supabase/server";
 
 export default async function Navbar() {
@@ -35,16 +34,11 @@ export default async function Navbar() {
             Mate<span className="text-blue-600">founder</span>
           </Link>
 
-          <div className="flex flex-wrap items-center gap-x-6 md:gap-x-8 font-bold text-slate-600">
-            <Link
-              href="/listings"
-              className="text-base hover:text-blue-600 transition-colors whitespace-nowrap cursor-pointer"
-            >
-              Оголошення
-            </Link>
-            <NavbarUserLinks key={user?.id ?? "guest"} initialUserId={user?.id} />
-            <NavbarAdminLinks initialIsAdmin={isAdmin} hasUser={Boolean(user?.id)} />
-          </div>
+          <NavbarPrimaryLinks
+            key={`${user?.id ?? "guest"}-${isAdmin ? "admin" : "user"}`}
+            initialUserId={user?.id}
+            initialIsAdmin={isAdmin}
+          />
         </div>
 
         <NavbarAuthControls
