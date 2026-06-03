@@ -48,6 +48,7 @@ Fill in `.env.local` with your values. Files containing real secrets (`.env`, `.
 ### 4. Run
 
 ```bash
+cd frontend
 npm install
 npm run dev
 ```
